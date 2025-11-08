@@ -1,3 +1,4 @@
+# executar_teste.py (compatível com banco interno)
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
@@ -7,6 +8,7 @@ import os
 import subprocess
 import platform
 from datetime import datetime
+from io import BytesIO
 
 from database import conectar, criar_tabelas
 
@@ -31,29 +33,27 @@ def gerar_pdf(nome_usuario, matricula, turno, acertos, erros, porcentagem, erros
     largura, altura = A4
 
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(2*cm, altura - 2*cm, "Relatório do Teste de Imagens")
+    c.drawString(2 * cm, altura - 2 * cm, "Relatório do Teste de Imagens")
 
     c.setFont("Helvetica", 12)
-    c.drawString(2*cm, altura - 3*cm, f"Nome: {nome_usuario}")
-    c.drawString(2*cm, altura - 3.7*cm, f"Matrícula: {matricula}")
-    c.drawString(2*cm, altura - 4.4*cm, f"Turno: {turno}")
+    c.drawString(2 * cm, altura - 3 * cm, f"Nome: {nome_usuario}")
+    c.drawString(2 * cm, altura - 3.7 * cm, f"Matrícula: {matricula}")
+    c.drawString(2 * cm, altura - 4.4 * cm, f"Turno: {turno}")
 
-    c.drawString(2*cm, altura - 5.2*cm, f"Acertos: {acertos}")
-    c.drawString(2*cm, altura - 5.9*cm, f"Erros: {len(erros_lista)}")
-    c.drawString(2*cm, altura - 6.6*cm,
-                 f"Porcentagem de Acerto: {porcentagem:.2f}%")
+    c.drawString(2 * cm, altura - 5.2 * cm, f"Acertos: {acertos}")
+    c.drawString(2 * cm, altura - 5.9 * cm, f"Erros: {len(erros_lista)}")
+    c.drawString(2 * cm, altura - 6.6 * cm, f"Porcentagem: {porcentagem:.2f}%")
 
-    c.drawString(2*cm, altura - 7.5*cm, "Lista de imagens erradas:")
+    c.drawString(2 * cm, altura - 7.5 * cm, "Lista de imagens erradas:")
 
-    y = altura - 8.3*cm
+    y = altura - 8.3 * cm
     c.setFont("Helvetica-Oblique", 10)
-    for img_path in erros_lista:
-        nome_arquivo = os.path.basename(img_path)
-        c.drawString(3*cm, y, nome_arquivo)
-        y -= 0.5*cm
-        if y < 2*cm:
+    for nome_arquivo in erros_lista:
+        c.drawString(3 * cm, y, nome_arquivo)
+        y -= 0.5 * cm
+        if y < 2 * cm:
             c.showPage()
-            y = altura - 2*cm
+            y = altura - 2 * cm
             c.setFont("Helvetica-Oblique", 10)
 
     c.save()
@@ -116,7 +116,7 @@ class TesteApp:
         self.lista_testes.delete(0, tk.END)
         conn = conectar()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, nome FROM testes")
+        cursor.execute("SELECT id, nome FROM testes ORDER BY nome")
         for row in cursor.fetchall():
             self.lista_testes.insert(tk.END, f"{row[0]} - {row[1]}")
         conn.close()
@@ -134,7 +134,7 @@ class TesteApp:
         conn = conectar()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT caminho, resposta_correta FROM imagens WHERE teste_id=?", (self.teste_id,))
+            "SELECT nome_arquivo, imagem, resposta_correta FROM imagens WHERE teste_id=?", (self.teste_id,))
         imagens = cursor.fetchall()
         conn.close()
 
@@ -143,17 +143,12 @@ class TesteApp:
             return
 
         imgs_list = list(imagens)
-        self.questoes = []
+        random.shuffle(imgs_list)
 
-        ultima = None
-        while len(self.questoes) < NUM_QUESTOES:
-            random.shuffle(imgs_list)
-            for img in imgs_list:
-                if img != ultima:
-                    self.questoes.append(img)
-                    ultima = img
-                    if len(self.questoes) >= NUM_QUESTOES:
-                        break
+        # Monta as questões
+        self.questoes = imgs_list[:NUM_QUESTOES] if len(
+            imgs_list) >= NUM_QUESTOES else imgs_list * (NUM_QUESTOES // len(imgs_list) + 1)
+        self.questoes = self.questoes[:NUM_QUESTOES]
 
         self.index = 0
         self.respostas_usuario = []
@@ -163,10 +158,10 @@ class TesteApp:
         for widget in self.root.winfo_children():
             widget.destroy()
 
-        caminho_img, _ = self.questoes[self.index]
-        img = Image.open(caminho_img)
-        img = img.resize((400, 300), Image.LANCZOS)
-        self.img_tk = ImageTk.PhotoImage(img)
+        nome_arquivo, blob, _ = self.questoes[self.index]
+        imagem = Image.open(BytesIO(blob))
+        imagem = imagem.resize((400, 300), Image.LANCZOS)
+        self.img_tk = ImageTk.PhotoImage(imagem)
 
         tk.Label(
             self.root, text=f"Questão {self.index+1} de {NUM_QUESTOES}").pack()
@@ -181,7 +176,8 @@ class TesteApp:
             "NOK")).pack(side=tk.LEFT, padx=5)
 
     def responder(self, resposta):
-        self.respostas_usuario.append((self.questoes[self.index][0], resposta))
+        nome_arquivo, _, _ = self.questoes[self.index]
+        self.respostas_usuario.append((nome_arquivo, resposta))
         self.index += 1
         if self.index < NUM_QUESTOES:
             self.tela_questao()
@@ -192,17 +188,17 @@ class TesteApp:
         conn = conectar()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT caminho, resposta_correta FROM imagens WHERE teste_id=?", (self.teste_id,))
+            "SELECT nome_arquivo, resposta_correta FROM imagens WHERE teste_id=?", (self.teste_id,))
         respostas_certas = dict(cursor.fetchall())
         conn.close()
 
         acertos = 0
         erros = []
-        for caminho, resposta in self.respostas_usuario:
-            if respostas_certas.get(caminho) == resposta:
+        for nome_arquivo, resposta in self.respostas_usuario:
+            if respostas_certas.get(nome_arquivo) == resposta:
                 acertos += 1
             else:
-                erros.append(caminho)
+                erros.append(nome_arquivo)
 
         porcentagem = (acertos / NUM_QUESTOES) * 100
 
