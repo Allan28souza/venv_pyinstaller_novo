@@ -22,7 +22,7 @@ class AdminApp:
         criar_tabelas()
         self.root = root
         self.voltar = voltar
-        self.root.title("Painel do Administrador")
+        self.root.title(f"Motherson Taubaté - Administração")
         centralizar_janela(root, 700, 500)
 
         tk.Label(root, text="Nome do teste:").pack()

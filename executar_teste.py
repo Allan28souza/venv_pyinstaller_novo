@@ -1,4 +1,5 @@
 # executar_teste.py (compatível com banco interno)
+from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
@@ -19,10 +20,9 @@ from database import conectar, criar_tabelas
 NUM_QUESTOES = 10  # Número de questões por teste
 
 
-def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem, erros_imagens, pasta_resultados=None, avaliador=None):
-    """
-    erros_imagens: lista de tuples (nome_arquivo, resposta_usuario, resposta_correta, imagem_blob_bytes)
-    """
+def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem,
+              erros_imagens, pasta_resultados=None, avaliador=None,
+              tempo_total=None, tempo_medio=None):
     if pasta_resultados is None:
         pasta_resultados = os.path.join(os.path.abspath("."), "resultados")
     os.makedirs(pasta_resultados, exist_ok=True)
@@ -35,74 +35,85 @@ def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem, erros_imagen
     c = canvas.Canvas(arquivo_pdf, pagesize=A4)
     largura, altura = A4
 
-    # Cabeçalho
+    # CABEÇALHO COM FUNDO CLARO
+    c.setFillColor(colors.lightgrey)
+    c.rect(1.5*cm, altura-4*cm, largura-3*cm, 3.5*cm, fill=True, stroke=False)
+    c.setFillColor(colors.black)
+
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(2 * cm, altura - 2 * cm, "Relatório do Teste de Imagens")
+    c.drawString(2*cm, altura - 2.2*cm, "Relatório do Teste de Imagens")
 
     c.setFont("Helvetica", 11)
-    c.drawString(2 * cm, altura - 3 * cm, f"Avaliador: {avaliador or ''}")
-    c.drawString(2 * cm, altura - 3.7 * cm, f"Nome: {nome_usuario}")
-    c.drawString(2 * cm, altura - 4.4 * cm, f"Matrícula: {matricula}")
-    c.drawString(2 * cm, altura - 5.1 * cm, f"Turno: {turno}")
-    c.drawString(2 * cm, altura - 5.8 * cm,
+    c.drawString(2*cm, altura - 2.8*cm, f"Avaliador: {avaliador or ''}")
+    c.drawString(2*cm, altura - 3.4*cm, f"Nome: {nome_usuario}")
+    c.drawString(2*cm, altura - 4.0*cm, f"Matrícula: {matricula}")
+    c.drawString(10*cm, altura - 2.8*cm, f"Turno: {turno}")
+    c.drawString(10*cm, altura - 3.4*cm,
                  f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(2 * cm, altura - 7 * cm, f"Acertos: {acertos}")
-    c.drawString(6 * cm, altura - 7 * cm, f"Porcentagem: {porcentagem:.2f}%")
+    # RESULTADOS EM CAIXA
+    c.setFillColor(colors.whitesmoke)
+    c.rect(1.5*cm, altura-6.5*cm, largura-3 *
+           cm, 1.5*cm, fill=True, stroke=False)
+    c.setFillColor(colors.black)
 
-    # Espaço antes da seção de erros
-    y = altura - 8.5 * cm
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(2*cm, altura - 6.0*cm, f"Acertos: {acertos}")
+    c.drawString(6*cm, altura - 6.0*cm, f"Porcentagem: {porcentagem:.2f}%")
+    if tempo_total is not None and tempo_medio is not None:
+        c.drawString(2*cm, altura - 6.7*cm, f"Tempo total: {tempo_total}s")
+        c.drawString(6*cm, altura - 6.7*cm, f"Tempo médio: {tempo_medio:.2f}s")
+
+    # SEPARADOR
+    c.setStrokeColor(colors.grey)
+    c.setLineWidth(0.5)
+    c.line(1.5*cm, altura-7.5*cm, largura-1.5*cm, altura-7.5*cm)
+
+    y = altura - 8.0*cm
 
     if not erros_imagens:
         c.setFont("Helvetica-Oblique", 11)
-        c.drawString(2 * cm, y, "Nenhuma imagem errada. Excelente desempenho!")
+        c.drawString(2*cm, y, "Nenhuma imagem errada. Excelente desempenho!")
         c.showPage()
         c.save()
         return arquivo_pdf
 
+    # SEÇÃO DE IMAGENS INCORRETAS
     c.setFont("Helvetica-Bold", 13)
-    c.drawString(2 * cm, y, "Imagens incorretas")
-    y -= 1 * cm
+    c.drawString(2*cm, y, "Imagens incorretas")
+    y -= 1*cm
 
-    # Para cada imagem errada, desenhar a miniatura e as legendas
-    thumb_max_w = 6.5 * cm
-    thumb_max_h = 5 * cm
-    gap_y = 0.6 * cm
+    thumb_max_w = 6.5*cm
+    thumb_max_h = 5*cm
+    gap_y = 0.6*cm
 
     for nome_arquivo, resposta_usuario, resposta_correta, imagem_blob in erros_imagens:
-        # Se não houver espaço vertical suficiente, cria nova página
-        if y < 4 * cm:
+        if y < 4*cm:
             c.showPage()
-            y = altura - 2 * cm
+            y = altura - 2*cm
 
-        # Colocar miniatura à esquerda
+        # Miniatura
         try:
             img_reader = ImageReader(BytesIO(imagem_blob))
             iw, ih = img_reader.getSize()
             scale = min(thumb_max_w / iw, thumb_max_h / ih, 1.0)
             w = iw * scale
             h = ih * scale
-
-            x_img = 2 * cm
-            c.drawImage(img_reader, x_img, y - h, width=w, height=h,
+            x_img = 2*cm
+            c.drawImage(img_reader, x_img, y-h, width=w, height=h,
                         preserveAspectRatio=True, anchor='sw')
-        except Exception as e:
-            # Se falhar ao desenhar a imagem, apenas escreve o nome do arquivo
+        except:
             c.setFont("Helvetica-Oblique", 10)
-            c.drawString(
-                2 * cm, y, f"[Erro ao exibir miniatura] {nome_arquivo}")
+            c.drawString(2*cm, y, f"[Erro ao exibir miniatura] {nome_arquivo}")
 
-        # Texto à direita da miniatura (ou abaixo, caso miniatura falhe)
-        x_text = 2 * cm + thumb_max_w + 0.6 * cm
+        # Legendas
+        x_text = 2*cm + thumb_max_w + 0.6*cm
         c.setFont("Helvetica", 10)
-        c.drawString(x_text, y - 0.5 * cm, f"Arquivo: {nome_arquivo}")
-        c.drawString(x_text, y - 1.2 * cm,
+        c.drawString(x_text, y-0.5*cm, f"Arquivo: {nome_arquivo}")
+        c.drawString(x_text, y-1.2*cm,
                      f"Resposta do usuário: {resposta_usuario}")
-        c.drawString(x_text, y - 1.9 * cm,
-                     f"Resposta correta: {resposta_correta}")
+        c.drawString(x_text, y-1.9*cm, f"Resposta correta: {resposta_correta}")
 
-        # desce o ponteiro vertical
         y -= (thumb_max_h + gap_y)
 
     c.showPage()
@@ -116,7 +127,7 @@ class TesteApp:
         self.root = root
         self.voltar = voltar
         self.avaliador = avaliador  # <-- armazenando o avaliador
-        self.root.title("Executar Teste")
+        self.root.title(f"Motherson Taubaté - Executar Teste")
         self.centralizar_janela(600, 500)
 
         self.nome_var = tk.StringVar()
@@ -137,6 +148,12 @@ class TesteApp:
         x = (largura_tela // 2) - (largura // 2)
         y = (altura_tela // 2) - (altura // 2)
         self.root.geometry(f"{largura}x{altura}+{x}+{y}")
+
+    def atualizar_tempo(self):
+        tempo_corrente = (datetime.now() - self.tempo_inicio).seconds
+        self.tempo_label.config(text=f"Tempo: {tempo_corrente}s")
+        # Chama de novo após 1 segundo
+        self.tempo_job = self.root.after(1000, self.atualizar_tempo)
 
     def tela_inicial(self):
         for widget in self.root.winfo_children():
@@ -218,18 +235,32 @@ class TesteApp:
             self.root, text=f"Questão {self.index+1} de {NUM_QUESTOES}").pack()
         tk.Label(self.root, image=self.img_tk).pack()
 
+        # Label do tempo
+        self.tempo_label = tk.Label(
+            self.root, text="Tempo: 0s", font=("Arial", 12))
+        self.tempo_label.pack(pady=5)
+
+        # Variável para controlar o tempo da questão
+        self.tempo_inicio = datetime.now()
+        self.atualizar_tempo()
+
         frame_btn = tk.Frame(self.root)
         frame_btn.pack(pady=10)
 
-        tk.Button(frame_btn, text="OK", width=15, command=lambda: self.responder(
-            "OK")).pack(side=tk.LEFT, padx=5)
-        tk.Button(frame_btn, text="NOK", width=15, command=lambda: self.responder(
-            "NOK")).pack(side=tk.LEFT, padx=5)
+        tk.Button(frame_btn, text="OK", width=15,
+                  command=lambda: self.responder("OK")).pack(side=tk.LEFT, padx=5)
+        tk.Button(frame_btn, text="NOK", width=15,
+                  command=lambda: self.responder("NOK")).pack(side=tk.LEFT, padx=5)
 
     def responder(self, resposta):
+        # Para o cronômetro
+        self.root.after_cancel(self.tempo_job)
+        tempo_gasto = (datetime.now() - self.tempo_inicio).seconds
+
         nome_arquivo, _, _ = self.questoes[self.index]
-        self.respostas_usuario.append((nome_arquivo, resposta))
+        self.respostas_usuario.append((nome_arquivo, resposta, tempo_gasto))
         self.index += 1
+
         if self.index < NUM_QUESTOES:
             self.tela_questao()
         else:
@@ -245,12 +276,13 @@ class TesteApp:
 
         acertos = 0
         erros = []
-        for nome_arquivo, resposta in self.respostas_usuario:
-            if respostas_certas.get(nome_arquivo) == resposta:
+
+        for nome_arquivo, resposta_usuario, tempo_gasto in self.respostas_usuario:
+            resposta_correta = respostas_certas.get(nome_arquivo)
+            if resposta_correta and resposta_correta.strip().upper() == resposta_usuario.strip().upper():
                 acertos += 1
             else:
-                # armazena tupla (nome, resposta_usuario)
-                erros.append((nome_arquivo, resposta))
+                erros.append((nome_arquivo, resposta_usuario))
 
         porcentagem = (acertos / NUM_QUESTOES) * 100
 
@@ -261,11 +293,12 @@ class TesteApp:
             resultados_dir, f"resultado_{self.nome_var.get()}_{data_hora}.csv")
 
         df = pd.DataFrame({
-            "Avaliador": [self.avaliador]*len(self.respostas_usuario),
             "Imagem": [r[0] for r in self.respostas_usuario],
-            "Resposta Usuario": [r[1] for r in self.respostas_usuario],
+            "Resposta Usuário": [r[1] for r in self.respostas_usuario],
+            "Tempo (s)": [r[2] for r in self.respostas_usuario],
             "Resposta Correta": [respostas_certas[r[0]] for r in self.respostas_usuario]
         })
+
         df.to_csv(nome_csv, index=False, sep=';', encoding='utf-8-sig')
 
         # Monta lista com blobs das imagens erradas para o PDF
@@ -274,14 +307,20 @@ class TesteApp:
             conn = conectar()
             cursor = conn.cursor()
             for nome_arquivo, resposta_usuario in erros:
-                cursor.execute("SELECT imagem, resposta_correta FROM imagens WHERE teste_id=? AND nome_arquivo=?",
-                               (self.teste_id, nome_arquivo))
+                cursor.execute(
+                    "SELECT imagem, resposta_correta FROM imagens WHERE teste_id=? AND nome_arquivo=?",
+                    (self.teste_id, nome_arquivo)
+                )
                 row = cursor.fetchone()
                 if row:
-                    imagem_blob, resposta_correta = row  # observe que coluna imagem é o BLOB
+                    imagem_blob, resposta_correta = row
                     erros_imagens.append(
                         (nome_arquivo, resposta_usuario, resposta_correta, imagem_blob))
             conn.close()
+
+            # Calcula tempos
+        tempo_total = sum(r[2] for r in self.respostas_usuario)
+        tempo_medio = tempo_total / NUM_QUESTOES
 
         arquivo_pdf = gerar_pdf(
             nome_usuario=self.nome_var.get(),
@@ -291,14 +330,22 @@ class TesteApp:
             porcentagem=porcentagem,
             erros_imagens=erros_imagens,
             pasta_resultados=resultados_dir,
-            avaliador=self.avaliador
+            avaliador=self.avaliador,
+            tempo_total=tempo_total,
+            tempo_medio=tempo_medio
         )
 
-        messagebox.showinfo(
-            "Resultado",
-            f"Acertos: {acertos}\nErros: {NUM_QUESTOES - acertos}\nPorcentagem: {porcentagem:.2f}%\n\n"
-            f"CSV salvo em: {nome_csv}\nPDF salvo em: {arquivo_pdf}"
+        # Monta o texto
+        resultado_texto = (
+            f"Acertos: {acertos}\n"
+            f"Erros: {NUM_QUESTOES - acertos}\n"
+            f"Porcentagem: {porcentagem:.2f}%\n"
+            f"Tempo total: {tempo_total}s\n"
+            f"Tempo médio por questão: {tempo_medio:.2f}s\n\n"
         )
+
+        # Exibe em uma única messagebox
+        messagebox.showinfo("Resultado do Teste", resultado_texto)
 
         # abre a pasta com resultados (mesmo código que você já tinha)
         try:
