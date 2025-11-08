@@ -1,4 +1,4 @@
-# executar_teste.py (compatível com banco interno)
+# executar_teste.py (com rodapé)
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.units import cm
@@ -10,12 +10,13 @@ from PIL import Image, ImageTk
 import random
 import pandas as pd
 import os
-import subprocess
 import platform
+import subprocess
 from datetime import datetime
 from io import BytesIO
 
 from database import conectar, criar_tabelas
+from utils import centralizar_janela, criar_rodape, show_error, show_info, abrir_pasta
 
 NUM_QUESTOES = 10  # Número de questões por teste
 
@@ -35,14 +36,12 @@ def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem,
     c = canvas.Canvas(arquivo_pdf, pagesize=A4)
     largura, altura = A4
 
-    # CABEÇALHO COM FUNDO CLARO
+    # Cabeçalho
     c.setFillColor(colors.lightgrey)
     c.rect(1.5*cm, altura-4*cm, largura-3*cm, 3.5*cm, fill=True, stroke=False)
     c.setFillColor(colors.black)
-
     c.setFont("Helvetica-Bold", 16)
     c.drawString(2*cm, altura - 2.2*cm, "Relatório do Teste de Imagens")
-
     c.setFont("Helvetica", 11)
     c.drawString(2*cm, altura - 2.8*cm, f"Avaliador: {avaliador or ''}")
     c.drawString(2*cm, altura - 3.4*cm, f"Nome: {nome_usuario}")
@@ -51,12 +50,11 @@ def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem,
     c.drawString(10*cm, altura - 3.4*cm,
                  f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # RESULTADOS EM CAIXA
+    # Resultados
     c.setFillColor(colors.whitesmoke)
     c.rect(1.5*cm, altura-6.5*cm, largura-3 *
            cm, 1.5*cm, fill=True, stroke=False)
     c.setFillColor(colors.black)
-
     c.setFont("Helvetica-Bold", 12)
     c.drawString(2*cm, altura - 6.0*cm, f"Acertos: {acertos}")
     c.drawString(6*cm, altura - 6.0*cm, f"Porcentagem: {porcentagem:.2f}%")
@@ -64,7 +62,7 @@ def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem,
         c.drawString(2*cm, altura - 6.7*cm, f"Tempo total: {tempo_total}s")
         c.drawString(6*cm, altura - 6.7*cm, f"Tempo médio: {tempo_medio:.2f}s")
 
-    # SEPARADOR
+    # Separador
     c.setStrokeColor(colors.grey)
     c.setLineWidth(0.5)
     c.line(1.5*cm, altura-7.5*cm, largura-1.5*cm, altura-7.5*cm)
@@ -78,7 +76,7 @@ def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem,
         c.save()
         return arquivo_pdf
 
-    # SEÇÃO DE IMAGENS INCORRETAS
+    # Imagens incorretas
     c.setFont("Helvetica-Bold", 13)
     c.drawString(2*cm, y, "Imagens incorretas")
     y -= 1*cm
@@ -91,29 +89,22 @@ def gerar_pdf(nome_usuario, matricula, turno, acertos, porcentagem,
         if y < 4*cm:
             c.showPage()
             y = altura - 2*cm
-
-        # Miniatura
         try:
             img_reader = ImageReader(BytesIO(imagem_blob))
             iw, ih = img_reader.getSize()
             scale = min(thumb_max_w / iw, thumb_max_h / ih, 1.0)
-            w = iw * scale
-            h = ih * scale
-            x_img = 2*cm
-            c.drawImage(img_reader, x_img, y-h, width=w, height=h,
+            w, h = iw * scale, ih * scale
+            c.drawImage(img_reader, 2*cm, y-h, width=w, height=h,
                         preserveAspectRatio=True, anchor='sw')
         except:
             c.setFont("Helvetica-Oblique", 10)
             c.drawString(2*cm, y, f"[Erro ao exibir miniatura] {nome_arquivo}")
-
-        # Legendas
         x_text = 2*cm + thumb_max_w + 0.6*cm
         c.setFont("Helvetica", 10)
         c.drawString(x_text, y-0.5*cm, f"Arquivo: {nome_arquivo}")
         c.drawString(x_text, y-1.2*cm,
                      f"Resposta do usuário: {resposta_usuario}")
         c.drawString(x_text, y-1.9*cm, f"Resposta correta: {resposta_correta}")
-
         y -= (thumb_max_h + gap_y)
 
     c.showPage()
@@ -126,9 +117,10 @@ class TesteApp:
         criar_tabelas()
         self.root = root
         self.voltar = voltar
-        self.avaliador = avaliador  # <-- armazenando o avaliador
-        self.root.title(f"Motherson Taubaté - Executar Teste")
-        self.centralizar_janela(600, 500)
+        self.avaliador = avaliador
+        self.rodape_frame = None
+        self.root.title("Motherson Taubaté - Executar Teste")
+        centralizar_janela(self.root, 600, 500)
 
         self.nome_var = tk.StringVar()
         self.matricula_var = tk.StringVar()
@@ -141,30 +133,30 @@ class TesteApp:
 
         self.tela_inicial()
 
-    def centralizar_janela(self, largura, altura):
-        self.root.update_idletasks()
-        largura_tela = self.root.winfo_screenwidth()
-        altura_tela = self.root.winfo_screenheight()
-        x = (largura_tela // 2) - (largura // 2)
-        y = (altura_tela // 2) - (altura // 2)
-        self.root.geometry(f"{largura}x{altura}+{x}+{y}")
-
     def atualizar_tempo(self):
         tempo_corrente = (datetime.now() - self.tempo_inicio).seconds
-        self.tempo_label.config(text=f"Tempo: {tempo_corrente}s")
-        # Chama de novo após 1 segundo
-        self.tempo_job = self.root.after(1000, self.atualizar_tempo)
+        if hasattr(self, "tempo_label"):
+            self.tempo_label.config(text=f"Tempo: {tempo_corrente}s")
+            self.tempo_job = self.root.after(1000, self.atualizar_tempo)
 
-    def tela_inicial(self):
+    def limpar_tela(self):
         for widget in self.root.winfo_children():
             widget.destroy()
+        if self.rodape_frame:
+            # Se for tupla ou lista, destrói cada item
+            if isinstance(self.rodape_frame, (tuple, list)):
+                for w in self.rodape_frame:
+                    w.destroy()
+            else:
+                self.rodape_frame.destroy()
+
+    def tela_inicial(self):
+        self.limpar_tela()
 
         tk.Label(self.root, text="Nome do Avaliado:").pack()
         tk.Entry(self.root, textvariable=self.nome_var).pack()
-
         tk.Label(self.root, text="Matrícula:").pack()
         tk.Entry(self.root, textvariable=self.matricula_var).pack()
-
         tk.Label(self.root, text="Turno:").pack()
         tk.Entry(self.root, textvariable=self.turno_var).pack()
 
@@ -180,6 +172,8 @@ class TesteApp:
             tk.Button(self.root, text="Voltar",
                       command=self.voltar).pack(pady=5)
 
+        self.rodape_frame = criar_rodape(self.root)
+
     def carregar_testes(self):
         self.lista_testes.delete(0, tk.END)
         conn = conectar()
@@ -192,12 +186,10 @@ class TesteApp:
     def iniciar_teste(self):
         selecao = self.lista_testes.curselection()
         if not selecao:
-            messagebox.showerror("Erro", "Selecione um teste!")
+            show_error("Erro", "Selecione um teste!")
             return
-
         item = self.lista_testes.get(selecao[0])
-        self.teste_id, _ = item.split(" - ", 1)
-        self.teste_id = int(self.teste_id)
+        self.teste_id = int(item.split(" - ", 1)[0])
 
         conn = conectar()
         cursor = conn.cursor()
@@ -207,15 +199,14 @@ class TesteApp:
         conn.close()
 
         if not imagens:
-            messagebox.showerror("Erro", "Este teste não possui imagens!")
+            show_error("Erro", "Este teste não possui imagens!")
             return
 
         imgs_list = list(imagens)
         random.shuffle(imgs_list)
-
-        # Monta as questões
-        self.questoes = imgs_list[:NUM_QUESTOES] if len(
-            imgs_list) >= NUM_QUESTOES else imgs_list * (NUM_QUESTOES // len(imgs_list) + 1)
+        self.questoes = (imgs_list[:NUM_QUESTOES]
+                         if len(imgs_list) >= NUM_QUESTOES
+                         else imgs_list * (NUM_QUESTOES // len(imgs_list) + 1))
         self.questoes = self.questoes[:NUM_QUESTOES]
 
         self.index = 0
@@ -223,8 +214,7 @@ class TesteApp:
         self.tela_questao()
 
     def tela_questao(self):
-        for widget in self.root.winfo_children():
-            widget.destroy()
+        self.limpar_tela()
 
         nome_arquivo, blob, _ = self.questoes[self.index]
         imagem = Image.open(BytesIO(blob))
@@ -239,22 +229,21 @@ class TesteApp:
         self.tempo_label = tk.Label(
             self.root, text="Tempo: 0s", font=("Arial", 12))
         self.tempo_label.pack(pady=5)
-
-        # Variável para controlar o tempo da questão
         self.tempo_inicio = datetime.now()
         self.atualizar_tempo()
 
         frame_btn = tk.Frame(self.root)
         frame_btn.pack(pady=10)
-
         tk.Button(frame_btn, text="OK", width=15,
                   command=lambda: self.responder("OK")).pack(side=tk.LEFT, padx=5)
         tk.Button(frame_btn, text="NOK", width=15,
                   command=lambda: self.responder("NOK")).pack(side=tk.LEFT, padx=5)
 
+        self.rodape_frame = criar_rodape(self.root)
+
     def responder(self, resposta):
-        # Para o cronômetro
-        self.root.after_cancel(self.tempo_job)
+        if hasattr(self, "tempo_job"):
+            self.root.after_cancel(self.tempo_job)
         tempo_gasto = (datetime.now() - self.tempo_inicio).seconds
 
         nome_arquivo, _, _ = self.questoes[self.index]
@@ -318,7 +307,7 @@ class TesteApp:
                         (nome_arquivo, resposta_usuario, resposta_correta, imagem_blob))
             conn.close()
 
-            # Calcula tempos
+        # Calcula tempos
         tempo_total = sum(r[2] for r in self.respostas_usuario)
         tempo_medio = tempo_total / NUM_QUESTOES
 
@@ -335,7 +324,6 @@ class TesteApp:
             tempo_medio=tempo_medio
         )
 
-        # Monta o texto
         resultado_texto = (
             f"Acertos: {acertos}\n"
             f"Erros: {NUM_QUESTOES - acertos}\n"
@@ -344,22 +332,8 @@ class TesteApp:
             f"Tempo médio por questão: {tempo_medio:.2f}s\n\n"
         )
 
-        # Exibe em uma única messagebox
-        messagebox.showinfo("Resultado do Teste", resultado_texto)
-
-        # abre a pasta com resultados (mesmo código que você já tinha)
-        try:
-            sistema = platform.system()
-            if sistema == "Windows":
-                os.startfile(resultados_dir)
-            elif sistema == "Darwin":
-                subprocess.Popen(["open", resultados_dir])
-            else:
-                subprocess.Popen(["xdg-open", resultados_dir])
-        except Exception as e:
-            messagebox.showwarning(
-                "Aviso", f"Não foi possível abrir a pasta: {e}")
-
+        show_info("Resultado do Teste", resultado_texto)
+        abrir_pasta(resultados_dir)
         self.tela_inicial()
 
 

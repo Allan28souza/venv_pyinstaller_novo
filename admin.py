@@ -1,20 +1,9 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
-import sqlite3
-import os
-import io
 
 from database import conectar, criar_tabelas, adicionar_imagem, listar_imagens, extrair_imagem_temp
-
-
-def centralizar_janela(janela, largura, altura):
-    janela.update_idletasks()
-    largura_tela = janela.winfo_screenwidth()
-    altura_tela = janela.winfo_screenheight()
-    x = (largura_tela // 2) - (largura // 2)
-    y = (altura_tela // 2) - (altura // 2)
-    janela.geometry(f"{largura}x{altura}+{x}+{y}")
+from utils import centralizar_janela, criar_rodape, show_error, show_info
 
 
 class AdminApp:
@@ -22,25 +11,61 @@ class AdminApp:
         criar_tabelas()
         self.root = root
         self.voltar = voltar
-        self.root.title(f"Motherson Taubaté - Administração")
+        self.rodape_frame = None  # Controle do rodapé
+        self.root.title("Motherson Taubaté - Administração")
+        centralizar_janela(root, 700, 500)
+        self.abrir_tela_admin()
+
+    def limpar_tela(self):
+        for widget in self.root.winfo_children():
+            if widget != self.rodape_frame:  # mantém o rodapé
+                widget.destroy()
+
+    import tkinter as tk
+
+
+class AdminApp:
+    def __init__(self, root, voltar=None):
+        criar_tabelas()
+        self.root = root
+        self.voltar = voltar
+        self.root.title("Motherson Taubaté - Administração")
         centralizar_janela(root, 700, 500)
 
-        tk.Label(root, text="Nome do teste:").pack()
-        self.entry_nome = tk.Entry(root)
+        # Cria o rodapé uma única vez
+        self.rodape_frame = criar_rodape(self.root)
+
+        # Abre a tela admin
+        self.abrir_tela_admin()
+
+    def limpar_tela(self):
+        # Remove todos os widgets, exceto o rodapé
+        for widget in self.root.winfo_children():
+            if widget != self.rodape_frame:
+                widget.destroy()
+
+    def abrir_tela_admin(self):
+        self.limpar_tela()
+
+        # Campos para cadastro de teste
+        tk.Label(self.root, text="Nome do teste:").pack()
+        self.entry_nome = tk.Entry(self.root)
         self.entry_nome.pack()
 
-        tk.Label(root, text="Descrição:").pack()
-        self.entry_desc = tk.Entry(root)
+        tk.Label(self.root, text="Descrição:").pack()
+        self.entry_desc = tk.Entry(self.root)
         self.entry_desc.pack()
 
-        tk.Button(root, text="Salvar Teste",
+        tk.Button(self.root, text="Salvar Teste",
                   command=self.salvar_teste).pack(pady=5)
 
-        tk.Label(root, text="Testes cadastrados:").pack()
-        self.lista_testes = tk.Listbox(root)
+        # Lista de testes
+        tk.Label(self.root, text="Testes cadastrados:").pack()
+        self.lista_testes = tk.Listbox(self.root)
         self.lista_testes.pack(fill=tk.BOTH, expand=True)
 
-        frame_botoes = tk.Frame(root)
+        # Botões de ação
+        frame_botoes = tk.Frame(self.root)
         frame_botoes.pack(pady=5)
 
         tk.Button(frame_botoes, text="Adicionar Imagem",
@@ -53,16 +78,20 @@ class AdminApp:
                   command=self.deletar_teste).grid(row=0, column=3, padx=5)
 
         if self.voltar:
-            tk.Button(root, text="Voltar", fg="red",
+            tk.Button(self.root, text="Voltar", fg="red",
                       command=self.voltar).pack(pady=5)
 
         self.carregar_testes()
+
+        # Cria rodapé se ainda não existir
+        if self.rodape_frame is None:
+            self.rodape_frame = criar_rodape(self.root)
 
     def salvar_teste(self):
         nome = self.entry_nome.get().strip()
         descricao = self.entry_desc.get().strip()
         if not nome:
-            messagebox.showerror("Erro", "O nome do teste é obrigatório!")
+            show_error("Erro", "O nome do teste é obrigatório!")
             return
         conn = conectar()
         cursor = conn.cursor()
@@ -70,12 +99,12 @@ class AdminApp:
             cursor.execute(
                 "INSERT INTO testes (nome, descricao) VALUES (?, ?)", (nome, descricao))
             conn.commit()
-            messagebox.showinfo("Sucesso", "Teste cadastrado!")
+            show_info("Sucesso", "Teste cadastrado!")
             self.entry_nome.delete(0, tk.END)
             self.entry_desc.delete(0, tk.END)
             self.carregar_testes()
-        except sqlite3.IntegrityError:
-            messagebox.showerror("Erro", "Já existe um teste com esse nome!")
+        except Exception:
+            show_error("Erro", "Já existe um teste com esse nome!")
         finally:
             conn.close()
 
@@ -92,7 +121,7 @@ class AdminApp:
     def adicionar_imagem(self):
         selecao = self.lista_testes.curselection()
         if not selecao:
-            messagebox.showerror("Erro", "Selecione um teste!")
+            show_error("Erro", "Selecione um teste!")
             return
 
         item = self.lista_testes.get(selecao[0])
@@ -108,14 +137,14 @@ class AdminApp:
 
         try:
             adicionar_imagem(teste_id, arquivo, resposta_correta)
-            messagebox.showinfo("Sucesso", "Imagem adicionada ao banco!")
+            show_info("Sucesso", "Imagem adicionada ao banco!")
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao salvar imagem: {e}")
+            show_error("Erro", f"Erro ao salvar imagem: {e}")
 
     def editar_teste(self):
         selecao = self.lista_testes.curselection()
         if not selecao:
-            messagebox.showerror("Erro", "Selecione um teste para editar!")
+            show_error("Erro", "Selecione um teste para editar!")
             return
 
         item = self.lista_testes.get(selecao[0])
@@ -135,17 +164,17 @@ class AdminApp:
             cursor.execute("UPDATE testes SET nome=?, descricao=? WHERE id=?",
                            (novo_nome, nova_desc, int(teste_id)))
             conn.commit()
-            messagebox.showinfo("Sucesso", "Teste atualizado!")
+            show_info("Sucesso", "Teste atualizado!")
             self.carregar_testes()
-        except sqlite3.IntegrityError:
-            messagebox.showerror("Erro", "Já existe um teste com esse nome!")
+        except Exception:
+            show_error("Erro", "Já existe um teste com esse nome!")
         finally:
             conn.close()
 
     def deletar_teste(self):
         selecao = self.lista_testes.curselection()
         if not selecao:
-            messagebox.showerror("Erro", "Selecione um teste!")
+            show_error("Erro", "Selecione um teste!")
             return
 
         item = self.lista_testes.get(selecao[0])
@@ -160,14 +189,13 @@ class AdminApp:
         cursor.execute("DELETE FROM testes WHERE id=?", (int(teste_id),))
         conn.commit()
         conn.close()
-        messagebox.showinfo("Sucesso", "Teste excluído!")
+        show_info("Sucesso", "Teste excluído!")
         self.carregar_testes()
 
     def abrir_janela_gerenciar_imagens(self):
         selecao = self.lista_testes.curselection()
         if not selecao:
-            messagebox.showerror(
-                "Erro", "Selecione um teste para gerenciar imagens!")
+            show_error("Erro", "Selecione um teste para gerenciar imagens!")
             return
 
         item = self.lista_testes.get(selecao[0])
@@ -219,7 +247,7 @@ class AdminApp:
         def excluir():
             selecionado = lista.curselection()
             if not selecionado:
-                messagebox.showerror("Erro", "Selecione uma imagem!")
+                show_error("Erro", "Selecione uma imagem!")
                 return
             index = selecionado[0]
             img_id, _, _ = imagens[index]
@@ -230,13 +258,13 @@ class AdminApp:
             cursor.execute("DELETE FROM imagens WHERE id=?", (img_id,))
             conn.commit()
             conn.close()
-            messagebox.showinfo("Sucesso", "Imagem excluída!")
+            show_info("Sucesso", "Imagem excluída!")
             imagens[:] = carregar()
 
         def editar_resposta():
             selecionado = lista.curselection()
             if not selecionado:
-                messagebox.showerror("Erro", "Selecione uma imagem!")
+                show_error("Erro", "Selecione uma imagem!")
                 return
             index = selecionado[0]
             img_id, _, resp_atual = imagens[index]
@@ -248,7 +276,7 @@ class AdminApp:
                 "UPDATE imagens SET resposta_correta=? WHERE id=?", (nova_resp, img_id))
             conn.commit()
             conn.close()
-            messagebox.showinfo("Sucesso", "Resposta atualizada!")
+            show_info("Sucesso", "Resposta atualizada!")
             imagens[:] = carregar()
 
         tk.Button(frame, text="Editar Resposta",
