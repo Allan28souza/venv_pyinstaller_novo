@@ -1,13 +1,15 @@
+# database.py
 import sqlite3
 import os
 import sys
 import tempfile
-
-# Caminho do banco de dados (pasta persistente)
+from datetime import datetime
+import shutil
 
 
 def get_db_path():
-    if getattr(sys, 'frozen', False):  # executável (PyInstaller)
+    """Retorna caminho persistente para o banco (pasta APPDATA se for exe)."""
+    if getattr(sys, 'frozen', False):
         base_dir = os.path.join(os.environ.get(
             "APPDATA", os.path.expanduser("~")), "TesteImagensApp")
     else:
@@ -16,86 +18,306 @@ def get_db_path():
     return os.path.join(base_dir, "testes.db")
 
 
-# Função para conectar ao banco
+DB_PATH = get_db_path()
+
+
 def conectar():
-    return sqlite3.connect(get_db_path())
+    return sqlite3.connect(DB_PATH)
 
 
-# Criação das tabelas
 def criar_tabelas():
     conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute("""
+    c = conn.cursor()
+
+    # testes, imagens (existentes)
+    c.execute("""
     CREATE TABLE IF NOT EXISTS testes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL,
         descricao TEXT
-    )
-    """)
-    cursor.execute("""
+    )""")
+
+    c.execute("""
     CREATE TABLE IF NOT EXISTS imagens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         teste_id INTEGER NOT NULL,
         nome_arquivo TEXT NOT NULL,
         imagem BLOB NOT NULL,
-        resposta_correta TEXT CHECK(resposta_correta IN ('OK', 'NOK')),
-        FOREIGN KEY (teste_id) REFERENCES testes(id) ON DELETE CASCADE
-    )
-    """)
+        resposta_correta TEXT CHECK(resposta_correta IN ('OK','NOK')),
+        FOREIGN KEY(teste_id) REFERENCES testes(id) ON DELETE CASCADE
+    )""")
+
+    # novos: operadores, avaliadores, turnos, resultados, respostas
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS operadores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL,
+        matricula TEXT UNIQUE NOT NULL,
+        turno TEXT
+    )""")
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS avaliadores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE NOT NULL
+    )""")
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS turnos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome_turno TEXT UNIQUE NOT NULL
+    )""")
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS resultados (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operador_id INTEGER,
+        teste_id INTEGER,
+        avaliador TEXT,
+        acertos INTEGER,
+        total INTEGER,
+        porcentagem REAL,
+        data_hora TEXT,
+        tempo_total INTEGER,
+        tempo_medio REAL,
+        FOREIGN KEY(operador_id) REFERENCES operadores(id),
+        FOREIGN KEY(teste_id) REFERENCES testes(id)
+    )""")
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS respostas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        resultado_id INTEGER,
+        nome_arquivo TEXT,
+        resposta_usuario TEXT,
+        resposta_correta TEXT,
+        tempo INTEGER,
+        FOREIGN KEY(resultado_id) REFERENCES resultados(id)
+    )""")
+
+    # garante turnos padrão (1°, 2°, 3°)
+    for t in ("1° Turno", "2° Turno", "3° Turno"):
+        try:
+            c.execute(
+                "INSERT OR IGNORE INTO turnos (nome_turno) VALUES (?)", (t,))
+        except:
+            pass
+
     conn.commit()
     conn.close()
 
+# imagens helpers
 
-# Adiciona imagem ao banco
+
 def adicionar_imagem(teste_id, caminho, resposta_correta):
     with open(caminho, "rb") as f:
-        imagem_blob = f.read()
-    nome_arquivo = os.path.basename(caminho)
-
+        blob = f.read()
+    nome = os.path.basename(caminho)
     conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO imagens (teste_id, nome_arquivo, resposta_correta, imagem)
-        VALUES (?, ?, ?, ?)
-    """, (teste_id, nome_arquivo, resposta_correta, imagem_blob))
+    c = conn.cursor()
+    c.execute("INSERT INTO imagens (teste_id, nome_arquivo, resposta_correta, imagem) VALUES (?,?,?,?)",
+              (teste_id, nome, resposta_correta, blob))
     conn.commit()
     conn.close()
 
 
-# Lista as imagens de um teste
 def listar_imagens(teste_id):
     conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, nome_arquivo, resposta_correta FROM imagens WHERE teste_id=?
-    """, (teste_id,))
-    imagens = cursor.fetchall()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, nome_arquivo, resposta_correta FROM imagens WHERE teste_id=?", (teste_id,))
+    rows = c.fetchall()
     conn.close()
-    return imagens
+    return rows
 
 
-# Extrai imagem temporariamente (para exibir no teste)
 def extrair_imagem_temp(imagem_id):
     conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT nome_arquivo, imagem FROM imagens WHERE id=?", (imagem_id,))
-    row = cursor.fetchone()
+    c = conn.cursor()
+    c.execute("SELECT nome_arquivo, imagem FROM imagens WHERE id=?", (imagem_id,))
+    row = c.fetchone()
     conn.close()
-
     if not row:
         return None
+    nome, blob = row
+    temp_dir = tempfile.mkdtemp(prefix="img_")
+    path = os.path.join(temp_dir, nome)
+    with open(path, "wb") as f:
+        f.write(blob)
+    return path
 
-    nome_arquivo, imagem_blob = row
-    temp_dir = tempfile.mkdtemp()
-    caminho_temp = os.path.join(temp_dir, nome_arquivo)
-    with open(caminho_temp, "wb") as f:
-        f.write(imagem_blob)
-    return caminho_temp
+# operadores / avaliadores / turnos
 
 
-# Função para retornar caminho compatível com executável
-def resource_path(relative_path):
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+def garantir_operador(nome, matricula, turno):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT id FROM operadores WHERE matricula=?", (matricula,))
+    r = c.fetchone()
+    if r:
+        op_id = r[0]
+        # atualiza nome/turno caso tenha mudado
+        c.execute("UPDATE operadores SET nome=?, turno=? WHERE id=?",
+                  (nome, turno, op_id))
+    else:
+        c.execute("INSERT INTO operadores (nome, matricula, turno) VALUES (?,?,?)",
+                  (nome, matricula, turno))
+        op_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return op_id
+
+
+def listar_operadores():
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT id, nome, matricula, turno FROM operadores ORDER BY nome")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def garantir_avaliador(nome):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT id FROM avaliadores WHERE nome=?", (nome,))
+    r = c.fetchone()
+    if r:
+        aid = r[0]
+    else:
+        c.execute("INSERT INTO avaliadores (nome) VALUES (?)", (nome,))
+        aid = c.lastrowid
+    conn.commit()
+    conn.close()
+    return aid
+
+
+def listar_avaliadores():
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT nome FROM avaliadores ORDER BY nome")
+    rows = [r[0] for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def listar_turnos():
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT nome_turno FROM turnos ORDER BY id")
+    rows = [r[0] for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def garantir_turno(nome_turno):
+    conn = conectar()
+    c = conn.cursor()
+    c.execute("SELECT id FROM turnos WHERE nome_turno=?", (nome_turno,))
+    r = c.fetchone()
+    if r:
+        tid = r[0]
+    else:
+        c.execute("INSERT INTO turnos (nome_turno) VALUES (?)", (nome_turno,))
+        tid = c.lastrowid
+    conn.commit()
+    conn.close()
+    return tid
+
+# resultados
+
+
+def salvar_resultado(operador_id, teste_id, avaliador, acertos, total, porcentagem, tempo_total, tempo_medio, respostas_list):
+    """
+    respostas_list: lista de tuples (nome_arquivo, resposta_usuario, resposta_correta, tempo_s)
+    retorna id do resultado
+    """
+    conn = conectar()
+    c = conn.cursor()
+    data_hora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""INSERT INTO resultados (operador_id, teste_id, avaliador, acertos, total, porcentagem, data_hora, tempo_total, tempo_medio)
+                 VALUES (?,?,?,?,?,?,?,?,?)""",
+              (operador_id, teste_id, avaliador, acertos, total, porcentagem, data_hora, tempo_total, tempo_medio))
+    resultado_id = c.lastrowid
+    for nome, resp_user, resp_correta, tempo in respostas_list:
+        c.execute("""INSERT INTO respostas (resultado_id, nome_arquivo, resposta_usuario, resposta_correta, tempo)
+                     VALUES (?,?,?,?,?)""", (resultado_id, nome, resp_user, resp_correta, tempo))
+    conn.commit()
+    conn.close()
+    return resultado_id
+
+
+def listar_resultados(filters=None):
+    """
+    Retorna resultados com filtros opcionais (dict): teste_id, operador_id, avaliador, turno, data_inicio, data_fim
+    """
+    filters = filters or {}
+    conn = conectar()
+    c = conn.cursor()
+    query = """SELECT r.id, r.operador_id, o.nome, o.matricula, r.teste_id, t.nome, r.avaliador, r.acertos, r.total, r.porcentagem, r.data_hora, r.tempo_total, r.tempo_medio
+               FROM resultados r
+               LEFT JOIN operadores o ON o.id=r.operador_id
+               LEFT JOIN testes t ON t.id=r.teste_id
+               WHERE 1=1"""
+    params = []
+    if filters.get("teste_id"):
+        query += " AND r.teste_id=?"
+        params.append(filters["teste_id"])
+    if filters.get("operador_id"):
+        query += " AND r.operador_id=?"
+        params.append(filters["operador_id"])
+    if filters.get("avaliador"):
+        query += " AND r.avaliador=?"
+        params.append(filters["avaliador"])
+    if filters.get("turno"):
+        query += " AND o.turno=?"
+        params.append(filters["turno"])
+    if filters.get("data_inicio"):
+        query += " AND r.data_hora>=?"
+        params.append(filters["data_inicio"])
+    if filters.get("data_fim"):
+        query += " AND r.data_hora<=?"
+        params.append(filters["data_fim"])
+    c.execute(query, tuple(params))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+
+def exportar_banco(destino_path):
+    """Copia o arquivo DB atual para destino_path."""
+    conn = conectar()
+    conn.close()
+    shutil.copy2(DB_PATH, destino_path)
+    return destino_path
+
+
+def importar_banco(arquivo_path, substituir=True):
+    """
+    Importa banco .db. Se substituir=True substitui o DB atual (após validação mínima).
+    Retorna True se ok.
+    """
+    # valida presença de tabelas esperadas (abertura em DB temporario)
+    tmp_conn = sqlite3.connect(":memory:")
+    try:
+        tmp_conn.close()
+        # valida abrindo arquivo importado
+        test_conn = sqlite3.connect(arquivo_path)
+        c = test_conn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [r[0] for r in c.fetchall()]
+        test_conn.close()
+        needed = {"testes", "imagens", "operadores",
+                  "avaliadores", "turnos", "resultados", "respostas"}
+        if not needed.issubset(set(tables)):
+            raise RuntimeError(
+                "Arquivo selecionado não possui todas as tabelas necessárias.")
+        if substituir:
+            shutil.copy2(arquivo_path, DB_PATH)
+            return True
+        else:
+            # mesclagem não implementada aqui (poderíamos criar lógica mais complexa)
+            raise NotImplementedError(
+                "Importação com mesclagem não implementada neste modo.")
+    except Exception as e:
+        raise e

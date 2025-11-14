@@ -1,284 +1,254 @@
+# admin.py
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from PIL import Image, ImageTk
-
-from database import conectar, criar_tabelas, adicionar_imagem, listar_imagens, extrair_imagem_temp
-from utils import centralizar_janela, criar_rodape, show_error, show_info
-
-
-class AdminApp:
-    def __init__(self, root, voltar=None):
-        criar_tabelas()
-        self.root = root
-        self.voltar = voltar
-        self.rodape_frame = None  # Controle do rodapé
-        self.root.title("Motherson Taubaté - Administração")
-        centralizar_janela(root, 700, 500)
-        self.abrir_tela_admin()
-
-    def limpar_tela(self):
-        for widget in self.root.winfo_children():
-            if widget != self.rodape_frame:  # mantém o rodapé
-                widget.destroy()
-
-    import tkinter as tk
+import os
+import database as db
+from utils import centralizar_janela, criar_rodape, show_error, show_info, abrir_pasta
 
 
 class AdminApp:
     def __init__(self, root, voltar=None):
-        criar_tabelas()
+        db.criar_tabelas()
         self.root = root
         self.voltar = voltar
         self.root.title("Motherson Taubaté - Administração")
-        centralizar_janela(root, 700, 500)
-
-        # Cria o rodapé uma única vez
-        self.rodape_frame = criar_rodape(self.root)
-
-        # Abre a tela admin
-        self.abrir_tela_admin()
+        centralizar_janela(root, 800, 600)
+        self.rodape = None
+        self.abrir_tela_principal()
 
     def limpar_tela(self):
-        # Remove todos os widgets, exceto o rodapé
-        for widget in self.root.winfo_children():
-            if widget != self.rodape_frame:
-                widget.destroy()
+        for w in self.root.winfo_children():
+            # preserva rodapé
+            if self.rodape and w == self.rodape:
+                continue
+            w.destroy()
 
-    def abrir_tela_admin(self):
+    def abrir_tela_principal(self):
         self.limpar_tela()
+        tk.Label(self.root, text="Painel de Administração",
+                 font=("Arial", 16, "bold")).pack(pady=10)
 
-        # Campos para cadastro de teste
-        tk.Label(self.root, text="Nome do teste:").pack()
-        self.entry_nome = tk.Entry(self.root)
-        self.entry_nome.pack()
-
-        tk.Label(self.root, text="Descrição:").pack()
-        self.entry_desc = tk.Entry(self.root)
-        self.entry_desc.pack()
-
-        tk.Button(self.root, text="Salvar Teste",
-                  command=self.salvar_teste).pack(pady=5)
-
-        # Lista de testes
-        tk.Label(self.root, text="Testes cadastrados:").pack()
-        self.lista_testes = tk.Listbox(self.root)
-        self.lista_testes.pack(fill=tk.BOTH, expand=True)
-
-        # Botões de ação
-        frame_botoes = tk.Frame(self.root)
-        frame_botoes.pack(pady=5)
-
-        tk.Button(frame_botoes, text="Adicionar Imagem",
-                  command=self.adicionar_imagem).grid(row=0, column=0, padx=5)
-        tk.Button(frame_botoes, text="Gerenciar Imagens",
-                  command=self.abrir_janela_gerenciar_imagens).grid(row=0, column=1, padx=5)
-        tk.Button(frame_botoes, text="Editar Teste",
-                  command=self.editar_teste).grid(row=0, column=2, padx=5)
-        tk.Button(frame_botoes, text="Excluir Teste",
-                  command=self.deletar_teste).grid(row=0, column=3, padx=5)
+        btn_frame = tk.Frame(self.root)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Gerenciar Testes", width=20,
+                   command=self.tela_testes).grid(row=0, column=0, padx=6, pady=6)
+        ttk.Button(btn_frame, text="Gerenciar Operadores", width=20,
+                   command=self.tela_operadores).grid(row=0, column=1, padx=6, pady=6)
+        ttk.Button(btn_frame, text="Resultados", width=20,
+                   command=self.tela_resultados).grid(row=0, column=2, padx=6, pady=6)
+        ttk.Button(btn_frame, text="Importar Banco (.db)", width=20,
+                   command=self.importar_banco).grid(row=1, column=0, padx=6, pady=6)
+        ttk.Button(btn_frame, text="Exportar Banco (.db)", width=20,
+                   command=self.exportar_banco).grid(row=1, column=1, padx=6, pady=6)
 
         if self.voltar:
-            tk.Button(self.root, text="Voltar", fg="red",
-                      command=self.voltar).pack(pady=5)
+            ttk.Button(self.root, text="Voltar",
+                       command=self.voltar).pack(pady=8)
+        if self.rodape:
+            try:
+                self.rodape.destroy()
+            except:
+                pass
+        self.rodape, _ = criar_rodape(self.root)
 
+    # ---------- Testes ----------
+    def tela_testes(self):
+        self.limpar_tela()
+        tk.Label(self.root, text="Testes Cadastrados",
+                 font=("Arial", 14)).pack(pady=6)
+        frame = tk.Frame(self.root)
+        frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.lista_testes = tk.Listbox(frame)
+        self.lista_testes.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = tk.Scrollbar(frame, command=self.lista_testes.yview)
+        sb.pack(side=tk.LEFT, fill=tk.Y)
+        self.lista_testes.config(yscrollcommand=sb.set)
+        btns = tk.Frame(self.root)
+        btns.pack(pady=6)
+        ttk.Button(btns, text="Novo Teste", command=self.novo_teste).grid(
+            row=0, column=0, padx=6)
+        ttk.Button(btns, text="Adicionar Imagem",
+                   command=self.adicionar_imagem).grid(row=0, column=1, padx=6)
+        ttk.Button(btns, text="Gerenciar Imagens",
+                   command=self.gerenciar_imagens).grid(row=0, column=2, padx=6)
+        ttk.Button(btns, text="Voltar", command=self.abrir_tela_principal).grid(
+            row=0, column=3, padx=6)
         self.carregar_testes()
-
-        # Cria rodapé se ainda não existir
-        if self.rodape_frame is None:
-            self.rodape_frame = criar_rodape(self.root)
-
-    def salvar_teste(self):
-        nome = self.entry_nome.get().strip()
-        descricao = self.entry_desc.get().strip()
-        if not nome:
-            show_error("Erro", "O nome do teste é obrigatório!")
-            return
-        conn = conectar()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO testes (nome, descricao) VALUES (?, ?)", (nome, descricao))
-            conn.commit()
-            show_info("Sucesso", "Teste cadastrado!")
-            self.entry_nome.delete(0, tk.END)
-            self.entry_desc.delete(0, tk.END)
-            self.carregar_testes()
-        except Exception:
-            show_error("Erro", "Já existe um teste com esse nome!")
-        finally:
-            conn.close()
 
     def carregar_testes(self):
         self.lista_testes.delete(0, tk.END)
-        conn = conectar()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, nome, descricao FROM testes ORDER BY nome")
-        for row in cursor.fetchall():
-            self.lista_testes.insert(
-                tk.END, f"{row[0]} - {row[1]} - {row[2] or ''}")
+        conn = db.conectar()
+        cur = conn.cursor()
+        cur.execute("SELECT id, nome, descricao FROM testes ORDER BY nome")
+        for r in cur.fetchall():
+            self.lista_testes.insert(tk.END, f"{r[0]} - {r[1]} - {r[2] or ''}")
         conn.close()
 
-    def adicionar_imagem(self):
-        selecao = self.lista_testes.curselection()
-        if not selecao:
-            show_error("Erro", "Selecione um teste!")
+    def novo_teste(self):
+        nome = simpledialog.askstring("Nome do Teste", "Nome:")
+        if not nome:
             return
-
-        item = self.lista_testes.get(selecao[0])
-        teste_id = int(item.split(" - ", 1)[0])
-
-        arquivo = filedialog.askopenfilename(
-            title="Selecione uma imagem", filetypes=[("Imagens", "*.png;*.jpg;*.jpeg")])
-        if not arquivo:
-            return
-
-        resp = messagebox.askquestion("Resposta Correta", "Essa imagem é OK?")
-        resposta_correta = "OK" if resp == "yes" else "NOK"
-
+        desc = simpledialog.askstring("Descrição", "Descrição (opcional):")
+        conn = db.conectar()
+        cur = conn.cursor()
         try:
-            adicionar_imagem(teste_id, arquivo, resposta_correta)
-            show_info("Sucesso", "Imagem adicionada ao banco!")
-        except Exception as e:
-            show_error("Erro", f"Erro ao salvar imagem: {e}")
-
-    def editar_teste(self):
-        selecao = self.lista_testes.curselection()
-        if not selecao:
-            show_error("Erro", "Selecione um teste para editar!")
-            return
-
-        item = self.lista_testes.get(selecao[0])
-        teste_id, nome_atual, desc_atual = item.split(" - ", 2)
-        novo_nome = simpledialog.askstring(
-            "Editar Nome", "Novo nome do teste:", initialvalue=nome_atual)
-        if not novo_nome:
-            return
-        nova_desc = simpledialog.askstring(
-            "Editar Descrição", "Nova descrição:", initialvalue=desc_atual)
-        if nova_desc is None:
-            return
-
-        conn = conectar()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("UPDATE testes SET nome=?, descricao=? WHERE id=?",
-                           (novo_nome, nova_desc, int(teste_id)))
+            cur.execute(
+                "INSERT INTO testes (nome, descricao) VALUES (?,?)", (nome, desc))
             conn.commit()
-            show_info("Sucesso", "Teste atualizado!")
+            show_info("Sucesso", "Teste criado")
             self.carregar_testes()
-        except Exception:
-            show_error("Erro", "Já existe um teste com esse nome!")
+        except Exception as e:
+            show_error("Erro", f"Não foi possível criar teste: {e}")
         finally:
             conn.close()
 
-    def deletar_teste(self):
-        selecao = self.lista_testes.curselection()
-        if not selecao:
+    def adicionar_imagem(self):
+        sel = self.lista_testes.curselection()
+        if not sel:
             show_error("Erro", "Selecione um teste!")
             return
-
-        item = self.lista_testes.get(selecao[0])
-        teste_id, nome_teste, _ = item.split(" - ", 2)
-        confirmar = messagebox.askyesno(
-            "Confirmar Exclusão", f"Deseja excluir o teste '{nome_teste}' e suas imagens?")
-        if not confirmar:
+        item = self.lista_testes.get(sel[0])
+        teste_id = int(item.split(" - ", 1)[0])
+        arquivo = filedialog.askopenfilename(title="Selecione imagem", filetypes=[
+                                             ("Imagens", "*.png;*.jpg;*.jpeg")])
+        if not arquivo:
             return
+        resp = messagebox.askquestion("Resposta correta", "Esta imagem é OK?")
+        resposta = "OK" if resp == "yes" else "NOK"
+        try:
+            db.adicionar_imagem(teste_id, arquivo, resposta)
+            show_info("Sucesso", "Imagem adicionada")
+        except Exception as e:
+            show_error("Erro", f"Falha ao adicionar imagem: {e}")
 
-        conn = conectar()
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM testes WHERE id=?", (int(teste_id),))
-        conn.commit()
-        conn.close()
-        show_info("Sucesso", "Teste excluído!")
-        self.carregar_testes()
-
-    def abrir_janela_gerenciar_imagens(self):
-        selecao = self.lista_testes.curselection()
-        if not selecao:
-            show_error("Erro", "Selecione um teste para gerenciar imagens!")
+    def gerenciar_imagens(self):
+        sel = self.lista_testes.curselection()
+        if not sel:
+            show_error("Erro", "Selecione um teste!")
             return
-
-        item = self.lista_testes.get(selecao[0])
-        teste_id, teste_nome, _ = item.split(" - ", 2)
-
-        janela = tk.Toplevel(self.root)
-        janela.title(f"Gerenciar Imagens - {teste_nome}")
-        centralizar_janela(janela, 750, 500)
-
-        lista = tk.Listbox(janela)
-        lista.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        frame = tk.Frame(janela)
-        frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
-
+        item = self.lista_testes.get(sel[0])
+        teste_id, nome = int(item.split(" - ", 1)[0]), item.split(" - ", 1)[1]
+        jan = tk.Toplevel(self.root)
+        jan.title(f"Gerenciar imagens - {nome}")
+        centralizar_janela(jan, 800, 500)
+        lista = tk.Listbox(jan)
+        lista.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
+        frame = tk.Frame(jan)
+        frame.pack(side=tk.RIGHT, fill=tk.Y, padx=6, pady=6)
         canvas = tk.Canvas(frame, width=400, height=300,
                            bd=2, relief=tk.SUNKEN)
-        canvas.pack(pady=10)
-        imagens_cache = {}
+        canvas.pack()
+        imgs = db.listar_imagens(teste_id)
+        for r in imgs:
+            lista.insert(tk.END, f"{r[0]} - {r[1]} - {r[2]}")
 
-        def carregar():
-            lista.delete(0, tk.END)
-            imagens = listar_imagens(int(teste_id))
-            for img_id, nome, resp in imagens:
-                lista.insert(tk.END, f"{img_id} - {nome} - {resp}")
-            return imagens
-
-        imagens = carregar()
-
-        def mostrar_preview(event=None):
-            selecionado = lista.curselection()
-            if not selecionado:
+        def mostrar(event=None):
+            seli = lista.curselection()
+            if not seli:
                 return
-            index = selecionado[0]
-            img_id, nome, resp = imagens[index]
-            caminho_temp = extrair_imagem_temp(img_id)
-            if not caminho_temp:
-                return
-            img = Image.open(caminho_temp)
-            img = img.resize((400, 300), Image.LANCZOS)
-            img_tk = ImageTk.PhotoImage(img)
-            imagens_cache["preview"] = img_tk
-            canvas.delete("all")
-            canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
-            canvas.image = img_tk
-
-        lista.bind("<<ListboxSelect>>", mostrar_preview)
+            idx = seli[0]
+            row = imgs[idx]
+            caminho = db.extrair_imagem_temp(row[0])
+            if caminho:
+                img = Image.open(caminho)
+                img = img.resize((400, 300), Image.Resampling.LANCZOS)
+                imgtk = ImageTk.PhotoImage(img)
+                canvas.delete("all")
+                canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
+                canvas.image = imgtk
+        lista.bind("<<ListboxSelect>>", mostrar)
 
         def excluir():
-            selecionado = lista.curselection()
-            if not selecionado:
-                show_error("Erro", "Selecione uma imagem!")
+            seli = lista.curselection()
+            if not seli:
                 return
-            index = selecionado[0]
-            img_id, _, _ = imagens[index]
-            if not messagebox.askyesno("Confirmação", "Excluir esta imagem?"):
+            idx = seli[0]
+            img_id = imgs[idx][0]
+            if not messagebox.askyesno("Confirm", "Excluir imagem?"):
                 return
-            conn = conectar()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM imagens WHERE id=?", (img_id,))
+            conn = db.conectar()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM imagens WHERE id=?", (img_id,))
             conn.commit()
             conn.close()
-            show_info("Sucesso", "Imagem excluída!")
-            imagens[:] = carregar()
+            messagebox.showinfo("Ok", "Excluída")
+            jan.destroy()
+        ttk.Button(frame, text="Excluir", command=excluir).pack(pady=6)
 
-        def editar_resposta():
-            selecionado = lista.curselection()
-            if not selecionado:
-                show_error("Erro", "Selecione uma imagem!")
-                return
-            index = selecionado[0]
-            img_id, _, resp_atual = imagens[index]
-            nova_resp = "OK" if messagebox.askyesno(
-                "Editar", "Definir resposta como OK? (Não = NOK)") else "NOK"
-            conn = conectar()
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE imagens SET resposta_correta=? WHERE id=?", (nova_resp, img_id))
-            conn.commit()
-            conn.close()
-            show_info("Sucesso", "Resposta atualizada!")
-            imagens[:] = carregar()
+    # ---------- Operadores ----------
+    def tela_operadores(self):
+        self.limpar_tela()
+        tk.Label(self.root, text="Operadores", font=("Arial", 14)).pack(pady=6)
+        frame = tk.Frame(self.root)
+        frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.lb_ops = tk.Listbox(frame)
+        self.lb_ops.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = tk.Scrollbar(frame, command=self.lb_ops.yview)
+        sb.pack(side=tk.LEFT, fill=tk.Y)
+        self.lb_ops.config(yscrollcommand=sb.set)
+        ttk.Button(self.root, text="Novo Operador",
+                   command=self.novo_operador).pack(pady=6)
+        ttk.Button(self.root, text="Voltar",
+                   command=self.abrir_tela_principal).pack(pady=6)
+        self.carregar_operadores()
 
-        tk.Button(frame, text="Editar Resposta",
-                  command=editar_resposta).pack(pady=5)
-        tk.Button(frame, text="Excluir Imagem", command=excluir).pack(pady=5)
+    def carregar_operadores(self):
+        self.lb_ops.delete(0, tk.END)
+        for id, nome, mat, turno in db.listar_operadores():
+            self.lb_ops.insert(tk.END, f"{id} - {nome} | {mat} | {turno}")
+
+    def novo_operador(self):
+        nome = simpledialog.askstring("Nome", "Nome:")
+        if not nome:
+            return
+        mat = simpledialog.askstring("Matrícula", "Matrícula:")
+        if not mat:
+            return
+        turnos = db.listar_turnos()
+        turno = turnos[0] if turnos else ""
+        db.garantir_operador(nome, mat, turno)
+        show_info("Sucesso", "Operador cadastrado")
+        self.carregar_operadores()
+
+    # ---------- Resultados ----------
+    def tela_resultados(self):
+        self.limpar_tela()
+        tk.Label(self.root, text="Resultados", font=("Arial", 14)).pack(pady=6)
+        frame = tk.Frame(self.root)
+        frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        cols = ("ID", "Operador", "Matr.", "Teste", "Avaliador",
+                "Acertos", "Total", "%", "Data", "TempoTotal(s)")
+        tree = ttk.Treeview(frame, columns=cols, show="headings")
+        for c in cols:
+            tree.heading(c, text=c)
+        tree.pack(fill=tk.BOTH, expand=True)
+        resultados = db.listar_resultados()
+        for r in resultados:
+            tree.insert("", tk.END, values=(
+                r[0], r[2], r[3], r[5], r[6], r[7], r[8], f"{r[9]:.2f}" if r[9] else "", r[10], r[11] or ""))
+        ttk.Button(self.root, text="Voltar",
+                   command=self.abrir_tela_principal).pack(pady=6)
+
+    # ---------- Import / Export ----------
+    def exportar_banco(self):
+        destino = filedialog.asksaveasfilename(
+            defaultextension=".db", filetypes=[("SQLite DB", "*.db")])
+        if not destino:
+            return
+        try:
+            db.exportar_banco(destino)
+            show_info("Exportado", f"Banco exportado para:\n{destino}")
+        except Exception as e:
+            show_error("Erro", f"Falha exportar DB: {e}")
+
+    def importar_banco(self):
+        arquivo = filedialog.askopenfilename(filetypes=[("SQLite DB", "*.db")])
+        if not arquivo:
+            return
+        try:
+            db.importar_banco(arquivo, substituir=True)
+            show_info(
+                "Importado", "Banco importado com sucesso. Reinicie a aplicação.")
+        except Exception as e:
+            show_error("Erro", f"Falha ao importar DB: {e}")
