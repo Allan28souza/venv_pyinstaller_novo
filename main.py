@@ -26,6 +26,7 @@ class MainApp:
 
     def abrir_tela_inicial(self):
         self.limpar_tela()
+
         tk.Label(self.root, text="Sistema de Testes",
                  font=("Arial", 14)).pack(pady=8)
 
@@ -39,16 +40,19 @@ class MainApp:
                 self.rodape_frame.destroy()
             except:
                 pass
+
         self.rodape_frame, self.hora_label = criar_rodape(self.root)
 
     def abrir_admin(self):
         self.limpar_tela()
         AdminApp(self.root, voltar=self.abrir_tela_inicial)
-        # AdminApp cuida do rodapé
 
+    # ---------------------------------------------------
+    # TELA DE ENTRADA DO OPERADOR / AVALIADOR
+    # ---------------------------------------------------
     def iniciar_teste(self):
         self.limpar_tela()
-        # Form para operador / matricula / avaliador / turno
+
         tk.Label(self.root, text="Nome do Operador:").pack(pady=3)
         nome_var = tk.StringVar()
         tk.Entry(self.root, textvariable=nome_var).pack()
@@ -68,40 +72,49 @@ class MainApp:
         avaliadores = db.listar_avaliadores()
         avaliador_cb = ttk.Combobox(
             self.root, values=avaliadores, state="readonly")
-        # se não houver avaliadores cadastrados, deixa em branco para o usuário adicionar via Admin
         if avaliadores:
             avaliador_cb.current(0)
         avaliador_cb.pack()
 
+        # -------------------------
+        # Continuar → selecionar teste
+        # -------------------------
         def continuar():
             nome = nome_var.get().strip()
             mat = mat_var.get().strip()
             turno = turno_cb.get().strip()
             avaliador = avaliador_cb.get().strip()
+
             if not nome or not mat:
                 show_error("Erro", "Informe nome e matrícula do operador!")
                 return
-            # garante operador no DB
+
+            # garante operador
             op_id = db.garantir_operador(nome, mat, turno)
-            # garante avaliador (se selecionado)
+
+            # garante avaliador, se selecionado
             if avaliador:
                 db.garantir_avaliador(avaliador)
-            # abre seleção de teste (simplificado: usa primeiro teste disponível)
+
+            # Buscar testes cadastrados
             conn = db.conectar()
             cur = conn.cursor()
             cur.execute("SELECT id, nome FROM testes ORDER BY nome")
             testes = cur.fetchall()
             conn.close()
+
             if not testes:
                 show_error(
                     "Erro", "Nenhum teste cadastrado. Vá em Administração.")
                 return
-            # se houver muitos testes ideal abrir uma tela de seleção. Aqui pegamos o primeiro para demo.
-            # melhor: abrir uma lista para o usuário escolher. Vou abrir uma janela de seleção:
+
+            # -------------------------
+            # Abrir janela de seleção de teste
+            # -------------------------
             sel_win = tk.Toplevel(self.root)
             sel_win.title("Selecione o teste")
-            from utils import centralizar_janela
             centralizar_janela(sel_win, 400, 300)
+
             lb = tk.Listbox(sel_win)
             for t in testes:
                 lb.insert(tk.END, f"{t[0]} - {t[1]}")
@@ -112,13 +125,15 @@ class MainApp:
                 if not sel:
                     show_error("Erro", "Selecione um teste!")
                     return
+
                 item = lb.get(sel[0])
                 teste_id = int(item.split(" - ", 1)[0])
                 nome_teste = item.split(" - ", 1)[1]
+
                 sel_win.destroy()
-                # inicia executor passando operador id e avaliador/turno
-                TesteExecutor(self.root, teste_id, nome_teste,
-                              operador_id=op_id, avaliador=avaliador, turno=turno)
+                self.abrir_executor(
+                    teste_id, nome_teste, op_id, avaliador, turno)
+
             ttk.Button(sel_win, text="Selecionar",
                        command=escolher).pack(pady=8)
 
@@ -126,11 +141,53 @@ class MainApp:
                    command=continuar).pack(pady=10)
         ttk.Button(self.root, text="Voltar", width=20,
                    command=self.abrir_tela_inicial).pack()
-        # rodapé
+
+        self.rodape_frame, self.hora_label = criar_rodape(self.root)
+
+    # ---------------------------------------------------
+    # ABRIR NOVA JANELA DO TESTE (Toplevel maximizada)
+    # ---------------------------------------------------
+    def abrir_executor(self, teste_id, nome_teste, operador_id, avaliador, turno):
+
+        # nova janela
+        win = tk.Toplevel(self.root)
+        win.title(f"Executando Teste - {nome_teste}")
+
+        # maximizar cross-platform
         try:
-            self.rodape_frame, self.hora_label = criar_rodape(self.root)
+            win.state("zoomed")      # Windows
         except:
-            pass
+            try:
+                win.attributes('-zoomed', True)  # Linux
+            except:
+                # fallback full screen geometry
+                w = win.winfo_screenwidth()
+                h = win.winfo_screenheight()
+                win.geometry(f"{w}x{h}+0+0")
+
+        # esconder janela principal
+        self.root.withdraw()
+
+        # callback ao fechar o Toplevel
+        def on_close():
+            try:
+                win.destroy()
+            except:
+                pass
+            self.root.deiconify()  # mostra janela principal de novo
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+
+        # inicializa executor com callback
+        TesteExecutor(
+            win,
+            teste_id,
+            nome_teste,
+            operador_id=operador_id,
+            avaliador=avaliador,
+            turno=turno,
+            on_close=on_close
+        )
 
 
 if __name__ == "__main__":

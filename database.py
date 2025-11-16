@@ -146,6 +146,23 @@ def extrair_imagem_temp(imagem_id):
         f.write(blob)
     return path
 
+
+def buscar_blob_imagem(nome_arquivo, teste_id):
+    """
+    Retorna o BLOB da imagem correspondente.
+    """
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT imagem
+        FROM imagens
+        WHERE nome_arquivo = ? AND teste_id = ?
+    """, (nome_arquivo, teste_id))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 # operadores / avaliadores / turnos
 
 
@@ -175,6 +192,26 @@ def listar_operadores():
     rows = c.fetchall()
     conn.close()
     return rows
+
+
+def obter_dados_operador(operador_id):
+    """
+    Retorna (nome, matricula, turno) do operador.
+    """
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT nome, matricula, turno
+        FROM operadores
+        WHERE id = ?
+    """, (operador_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return row[0], row[1], row[2]  # nome, matricula, turno
+    else:
+        return "", "", ""
 
 
 def garantir_avaliador(nome):
