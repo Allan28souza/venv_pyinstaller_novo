@@ -1,4 +1,4 @@
-# main.py
+from utils import AutocompleteCombobox
 import tkinter as tk
 from tkinter import ttk
 from admin_views.admin import AdminApp
@@ -9,7 +9,7 @@ from utils import centralizar_janela, criar_rodape, show_error
 
 class MainApp:
     def __init__(self, root):
-        db.criar_tabelas()
+        db.criar_tabelas()  # garante DB
         self.root = root
         self.root.title("Motherson Taubaté - Sistema de Testes com Imagens")
         self.root.geometry("420x320")
@@ -20,10 +20,14 @@ class MainApp:
 
         self.abrir_tela_inicial()
 
+    # ---------------------------------------------------
     def limpar_tela(self):
         for w in self.root.winfo_children():
             w.destroy()
 
+    # ---------------------------------------------------
+    # TELA PRINCIPAL
+    # ---------------------------------------------------
     def abrir_tela_inicial(self):
         self.limpar_tela()
 
@@ -32,6 +36,7 @@ class MainApp:
 
         tk.Button(self.root, text="Administração", width=28,
                   command=self.abrir_admin).pack(pady=6)
+
         tk.Button(self.root, text="Executar Teste", width=28,
                   command=self.iniciar_teste).pack(pady=6)
 
@@ -43,6 +48,7 @@ class MainApp:
 
         self.rodape_frame, self.hora_label = criar_rodape(self.root)
 
+    # ---------------------------------------------------
     def abrir_admin(self):
         self.limpar_tela()
         AdminApp(self.root, voltar=self.abrir_tela_inicial)
@@ -50,53 +56,92 @@ class MainApp:
     # ---------------------------------------------------
     # TELA DE ENTRADA DO OPERADOR / AVALIADOR
     # ---------------------------------------------------
+
     def iniciar_teste(self):
         self.limpar_tela()
 
-        tk.Label(self.root, text="Nome do Operador:").pack(pady=3)
-        nome_var = tk.StringVar()
-        tk.Entry(self.root, textvariable=nome_var).pack()
+        tk.Label(self.root, text="Operador:", font=("Arial", 11)).pack(pady=3)
 
-        tk.Label(self.root, text="Matrícula:").pack(pady=3)
+        # lista: "Nome (matrícula)"
+        ops = db.listar_operadores()
+        lista_ops = [f"{op[1]} ({op[2]})" for op in ops]
+
+        operador_cb = AutocompleteCombobox(self.root, width=35)
+        operador_cb.set_completion_list(lista_ops)
+        operador_cb.pack(pady=3)
+
+        tk.Label(self.root, text="Matrícula:", font=("Arial", 11)).pack(pady=3)
         mat_var = tk.StringVar()
-        tk.Entry(self.root, textvariable=mat_var).pack()
+        mat_entry = tk.Entry(self.root, textvariable=mat_var, width=30)
+        mat_entry.pack()
 
-        tk.Label(self.root, text="Turno:").pack(pady=3)
+        tk.Label(self.root, text="Turno:", font=("Arial", 11)).pack(pady=3)
         turnos = db.listar_turnos()
-        turno_cb = ttk.Combobox(self.root, values=turnos, state="readonly")
+        turno_cb = ttk.Combobox(self.root, values=turnos,
+                                state="readonly", width=25)
         if turnos:
             turno_cb.current(0)
         turno_cb.pack()
 
-        tk.Label(self.root, text="Avaliador:").pack(pady=3)
+        tk.Label(self.root, text="Avaliador:", font=("Arial", 11)).pack(pady=3)
         avaliadores = db.listar_avaliadores()
         avaliador_cb = ttk.Combobox(
-            self.root, values=avaliadores, state="readonly")
+            self.root, values=avaliadores, state="readonly", width=25)
         if avaliadores:
             avaliador_cb.current(0)
         avaliador_cb.pack()
 
-        # -------------------------
-        # Continuar → selecionar teste
-        # -------------------------
-        def continuar():
-            nome = nome_var.get().strip()
-            mat = mat_var.get().strip()
-            turno = turno_cb.get().strip()
-            avaliador = avaliador_cb.get().strip()
+        # -----------------------------
+        # Quando seleciona um operador existente → preencher matrícula/turno automaticamente
+        # -----------------------------
+        def preencher():
+            texto = operador_cb.get().strip()
 
-            if not nome or not mat:
-                show_error("Erro", "Informe nome e matrícula do operador!")
+            if "(" in texto and ")" in texto:
+                nome = texto.split(" (")[0]
+                mat = texto.split("(")[1].replace(")", "")
+            else:
                 return
 
-            # garante operador
-            op_id = db.garantir_operador(nome, mat, turno)
+            for op in ops:
+                if op[1] == nome and op[2] == mat:
+                    mat_var.set(op[2])
+                    turno_cb.set(op[3])
+                    return
 
-            # garante avaliador, se selecionado
+        operador_cb.bind("<<ComboboxSelected>>", lambda e: preencher())
+
+        # -----------------------------
+        # Continuar → selecionar teste
+        # -----------------------------
+        def continuar():
+            texto = operador_cb.get().strip()
+            nome = ""
+            matricula = ""
+
+            # Caso já exista
+            if "(" in texto and texto.endswith(")"):
+                nome = texto.split(" (")[0]
+                matricula = texto.split("(")[1].replace(")", "")
+            else:
+                # operador novo digitado
+                nome = texto
+                matricula = mat_var.get().strip()
+
+            turno = turno_cb.get()
+            avaliador = avaliador_cb.get()
+
+            if not nome or not matricula:
+                return show_error("Erro", "Informe nome e matrícula!")
+
+            # cadastra / atualiza operador
+            op_id = db.garantir_operador(nome, matricula, turno)
+
+            # garante avaliador
             if avaliador:
                 db.garantir_avaliador(avaliador)
 
-            # Buscar testes cadastrados
+            # pega testes
             conn = db.conectar()
             cur = conn.cursor()
             cur.execute("SELECT id, nome FROM testes ORDER BY nome")
@@ -104,85 +149,65 @@ class MainApp:
             conn.close()
 
             if not testes:
-                show_error(
-                    "Erro", "Nenhum teste cadastrado. Vá em Administração.")
-                return
+                return show_error("Erro", "Nenhum teste cadastrado!")
 
-            # -------------------------
-            # Abrir janela de seleção de teste
-            # -------------------------
+            # janela de seleção
             sel_win = tk.Toplevel(self.root)
-            sel_win.title("Selecione o teste")
-            centralizar_janela(sel_win, 400, 300)
-
+            sel_win.title("Selecione o Teste")
+            sel_win.geometry("420x320")
             lb = tk.Listbox(sel_win)
             for t in testes:
                 lb.insert(tk.END, f"{t[0]} - {t[1]}")
-            lb.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            lb.pack(fill="both", expand=True, padx=10, pady=10)
 
             def escolher():
                 sel = lb.curselection()
                 if not sel:
-                    show_error("Erro", "Selecione um teste!")
-                    return
-
+                    return show_error("Erro", "Selecione um teste!")
                 item = lb.get(sel[0])
                 teste_id = int(item.split(" - ", 1)[0])
                 nome_teste = item.split(" - ", 1)[1]
-
                 sel_win.destroy()
-                self.abrir_executor(
-                    teste_id, nome_teste, op_id, avaliador, turno)
+                self.abrir_executor(teste_id, nome_teste,
+                                    op_id, avaliador, turno)
 
             ttk.Button(sel_win, text="Selecionar",
-                       command=escolher).pack(pady=8)
+                       command=escolher).pack(pady=10)
 
-        ttk.Button(self.root, text="Continuar", width=20,
-                   command=continuar).pack(pady=10)
-        ttk.Button(self.root, text="Voltar", width=20,
+        ttk.Button(self.root, text="Continuar", width=25,
+                   command=continuar).pack(pady=12)
+        ttk.Button(self.root, text="Voltar", width=25,
                    command=self.abrir_tela_inicial).pack()
 
         self.rodape_frame, self.hora_label = criar_rodape(self.root)
 
     # ---------------------------------------------------
-    # ABRIR NOVA JANELA DO TESTE (Toplevel maximizada)
+    # ABRIR A JANELA DO TESTE (SEM TELA BRANCA)
     # ---------------------------------------------------
+
     def abrir_executor(self, teste_id, nome_teste, operador_id, avaliador, turno):
 
-        # nova janela
+        # Janela do teste criada pelo próprio TesteExecutor
+        # Aqui será apenas criada uma janela PAI que é escondida
         win = tk.Toplevel(self.root)
-        win.title(f"Executando Teste - {nome_teste}")
+        win.withdraw()   # janela oculta, pois o executor criará sua própria
 
-        # maximizar cross-platform
-        try:
-            win.state("zoomed")      # Windows
-        except:
-            try:
-                win.attributes('-zoomed', True)  # Linux
-            except:
-                # fallback full screen geometry
-                w = win.winfo_screenwidth()
-                h = win.winfo_screenheight()
-                win.geometry(f"{w}x{h}+0+0")
-
-        # esconder janela principal
+        # Esconde a principal enquanto o teste roda
         self.root.withdraw()
 
-        # callback ao fechar o Toplevel
+        # Callback para quando o teste terminar
         def on_close():
             try:
                 win.destroy()
             except:
                 pass
-            self.root.deiconify()  # mostra janela principal de novo
+            self.root.deiconify()  # volta a tela principal
 
-        win.protocol("WM_DELETE_WINDOW", on_close)
-
-        # inicializa executor com callback
+        # Inicia o executor **corretamente passando self.root**
         TesteExecutor(
-            win,
-            teste_id,
-            nome_teste,
+            root=self.root,
+            teste_id=teste_id,
+            nome_teste=nome_teste,
             operador_id=operador_id,
             avaliador=avaliador,
             turno=turno,

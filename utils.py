@@ -1,4 +1,5 @@
 # utils.py
+from tkinter import ttk
 import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
@@ -178,3 +179,43 @@ def gerar_relatorio_pdf(nome_usuario, matricula, turno, acertos, porcentagem, er
     show_info("Relatório Gerado", f"Relatório salvo em:\n{arquivo_pdf}")
     abrir_pasta(pasta_resultados)
     return arquivo_pdf
+
+
+class AutocompleteCombobox(ttk.Combobox):
+
+    def set_completion_list(self, completion_list):
+        """Lista base para autocompletar"""
+        self._completion_list = sorted(completion_list, key=str.lower)
+        self['values'] = self._completion_list
+        self.bind('<KeyRelease>', self._handle_keyrelease)
+        self._hits = []
+        self._hit_index = 0
+        self.position = 0
+
+    def _autocomplete(self, delta=0):
+        """Autocomplete interno"""
+        if delta:
+            self.delete(self.position, tk.END)
+        else:
+            self.position = len(self.get())
+
+        _hits = []
+        for element in self._completion_list:
+            if element.lower().startswith(self.get().lower()):
+                _hits.append(element)
+
+        if _hits != self._hits:
+            self._hit_index = 0
+            self._hits = _hits
+
+        if _hits:
+            self.delete(0, tk.END)
+            self.insert(0, _hits[self._hit_index])
+            self.select_range(self.position, tk.END)
+
+    def _handle_keyrelease(self, event):
+        if event.keysym == "BackSpace":
+            self.delete(self.index(tk.INSERT), tk.END)
+            self.position = self.index(tk.END)
+        elif len(event.keysym) == 1:
+            self._autocomplete()
