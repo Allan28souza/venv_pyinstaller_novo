@@ -1,0 +1,1 @@
+# Permite importar os módulos como pacote

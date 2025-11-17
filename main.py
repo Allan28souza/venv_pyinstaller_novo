@@ -1,7 +1,7 @@
 # main.py
 import tkinter as tk
 from tkinter import ttk
-from admin import AdminApp
+from admin_views.admin import AdminApp
 from executar_teste import TesteExecutor
 import database as db
 from utils import centralizar_janela, criar_rodape, show_error

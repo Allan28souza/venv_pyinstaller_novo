@@ -358,3 +358,98 @@ def importar_banco(arquivo_path, substituir=True):
                 "Importação com mesclagem não implementada neste modo.")
     except Exception as e:
         raise e
+
+
+def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
+    """
+    Importa outro banco .db e MESCLA com o banco atual.
+    Se ignorar_duplicados=True, não sobrescreve operadores, avaliadores, testes etc.
+    """
+    if not os.path.exists(arquivo_import):
+        raise FileNotFoundError("Banco a importar não encontrado.")
+
+    conn_atual = conectar()
+    cur_atual = conn_atual.cursor()
+
+    conn_import = sqlite3.connect(arquivo_import)
+    cur_imp = conn_import.cursor()
+
+    # -------------------------------
+    # IMPORTAR OPERADORES
+    # -------------------------------
+    cur_imp.execute("SELECT nome, matricula, turno FROM operadores")
+    for nome, mat, turno in cur_imp.fetchall():
+        if ignorar_duplicados:
+            cur_atual.execute(
+                "SELECT id FROM operadores WHERE matricula=?", (mat,))
+            existe = cur_atual.fetchone()
+            if existe:
+                continue
+        cur_atual.execute(
+            "INSERT INTO operadores (nome, matricula, turno) VALUES (?,?,?)",
+            (nome, mat, turno)
+        )
+
+    # -------------------------------
+    # IMPORTAR AVALIADORES
+    # -------------------------------
+    cur_imp.execute("SELECT nome FROM avaliadores")
+    for (nome,) in cur_imp.fetchall():
+        if ignorar_duplicados:
+            cur_atual.execute(
+                "SELECT nome FROM avaliadores WHERE nome=?", (nome,))
+            if cur_atual.fetchone():
+                continue
+        cur_atual.execute("INSERT INTO avaliadores (nome) VALUES (?)", (nome,))
+
+    # -------------------------------
+    # IMPORTAR TESTES
+    # -------------------------------
+    cur_imp.execute("SELECT nome, descricao FROM testes")
+    for nome, desc in cur_imp.fetchall():
+        if ignorar_duplicados:
+            cur_atual.execute(
+                "SELECT id FROM testes WHERE nome=?", (nome,))
+            if cur_atual.fetchone():
+                continue
+        cur_atual.execute(
+            "INSERT INTO testes (nome, descricao) VALUES (?,?)",
+            (nome, desc)
+        )
+
+    # -------------------------------
+    # IMPORTAR RESULTADOS
+    # -------------------------------
+    cur_imp.execute(
+        "SELECT operador_id, teste_id, avaliador, acertos, total, porcentagem, data_hora, tempo_total, tempo_medio FROM resultados")
+    for r in cur_imp.fetchall():
+        cur_atual.execute("""
+            INSERT INTO resultados 
+            (operador_id, teste_id, avaliador, acertos, total, porcentagem, data_hora, tempo_total, tempo_medio)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, r)
+
+    # -------------------------------
+    # IMPORTAR IMAGENS
+    # -------------------------------
+    cur_imp.execute(
+        "SELECT teste_id, nome_arquivo, resposta_correta, imagem FROM imagens")
+    for row in cur_imp.fetchall():
+        teste_id, nome_arquivo, resposta, blob = row
+
+        if ignorar_duplicados:
+            cur_atual.execute(
+                "SELECT id FROM imagens WHERE teste_id=? AND nome_arquivo=?",
+                (teste_id, nome_arquivo)
+            )
+            if cur_atual.fetchone():
+                continue
+
+        cur_atual.execute(
+            "INSERT INTO imagens (teste_id, nome_arquivo, resposta_correta, imagem) VALUES (?,?,?,?)",
+            (teste_id, nome_arquivo, resposta, blob)
+        )
+
+    conn_atual.commit()
+    conn_import.close()
+    conn_atual.close()
