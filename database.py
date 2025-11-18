@@ -34,7 +34,7 @@ def conectar():
 
 
 # ============================================================
-# CRIAR TABELAS
+# CRIAR TABELAS + ATUALIZAÇÕES RR
 # ============================================================
 
 def criar_tabelas():
@@ -83,7 +83,7 @@ def criar_tabelas():
         nome_turno TEXT UNIQUE NOT NULL
     )""")
 
-    # RESULTADOS
+    # RESULTADOS (AGORA COM COLUNA "repeticao")
     c.execute("""
     CREATE TABLE IF NOT EXISTS resultados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,11 +96,12 @@ def criar_tabelas():
         data_hora TEXT,
         tempo_total INTEGER,
         tempo_medio REAL,
+        repeticao INTEGER,
         FOREIGN KEY(operador_id) REFERENCES operadores(id),
         FOREIGN KEY(teste_id) REFERENCES testes(id)
     )""")
 
-    # RESPOSTAS INDIVIDUAIS
+    # RESPOSTAS INDIVIDUAIS (AGORA COM COLUNA "repeticao")
     c.execute("""
     CREATE TABLE IF NOT EXISTS respostas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,16 +110,33 @@ def criar_tabelas():
         resposta_usuario TEXT,
         resposta_correta TEXT,
         tempo INTEGER,
+        repeticao INTEGER,
         FOREIGN KEY(resultado_id) REFERENCES resultados(id)
     )""")
 
-    # TURNOS PADRÃO
+    # INSERIR TURNOS PADRÃO
     for t in ("1° Turno", "2° Turno", "3° Turno"):
         try:
             c.execute(
                 "INSERT OR IGNORE INTO turnos (nome_turno) VALUES (?)", (t,))
         except:
             pass
+
+    # ============================================================
+    # ADICIONAR COLUNAS NOVAS SE O BANCO JÁ EXISTIR (UPDATE)
+    # ============================================================
+
+    # Verifica e adiciona repetição em resultados
+    c.execute("PRAGMA table_info(resultados)")
+    colunas_resultados = [row[1] for row in c.fetchall()]
+    if "repeticao" not in colunas_resultados:
+        c.execute("ALTER TABLE resultados ADD COLUMN repeticao INTEGER DEFAULT 1")
+
+    # Verifica e adiciona repetição em respostas
+    c.execute("PRAGMA table_info(respostas)")
+    colunas_respostas = [row[1] for row in c.fetchall()]
+    if "repeticao" not in colunas_respostas:
+        c.execute("ALTER TABLE respostas ADD COLUMN repeticao INTEGER DEFAULT 1")
 
     conn.commit()
     conn.close()
@@ -223,9 +241,6 @@ def listar_operadores():
 
 
 def obter_dados_operador(operador_id):
-    """
-    Retorna SEMPRE: (nome, matricula, turno)
-    """
     conn = conectar()
     c = conn.cursor()
     c.execute("""
@@ -281,12 +296,13 @@ def listar_turnos():
 
 
 # ============================================================
-# RESULTADOS
+# RESULTADOS + REQUISITO RR (repetição)
 # ============================================================
 
 def salvar_resultado(operador_id, teste_id, avaliador,
                      acertos, total, porcentagem,
-                     tempo_total, tempo_medio, respostas_list):
+                     tempo_total, tempo_medio, respostas_list,
+                     repeticao):
 
     conn = conectar()
     c = conn.cursor()
@@ -296,19 +312,19 @@ def salvar_resultado(operador_id, teste_id, avaliador,
     c.execute("""
         INSERT INTO resultados
         (operador_id, teste_id, avaliador, acertos, total,
-         porcentagem, data_hora, tempo_total, tempo_medio)
-        VALUES (?,?,?,?,?,?,?,?,?)
+         porcentagem, data_hora, tempo_total, tempo_medio, repeticao)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
     """, (operador_id, teste_id, avaliador, acertos,
-          total, porcentagem, data_hora, tempo_total, tempo_medio))
+          total, porcentagem, data_hora, tempo_total, tempo_medio, repeticao))
 
     resultado_id = c.lastrowid
 
     for nome, resp_user, resp_correta, tempo in respostas_list:
         c.execute("""
             INSERT INTO respostas
-            (resultado_id, nome_arquivo, resposta_usuario, resposta_correta, tempo)
-            VALUES (?,?,?,?,?)
-        """, (resultado_id, nome, resp_user, resp_correta, tempo))
+            (resultado_id, nome_arquivo, resposta_usuario, resposta_correta, tempo, repeticao)
+            VALUES (?,?,?,?,?,?)
+        """, (resultado_id, nome, resp_user, resp_correta, tempo, repeticao))
 
     conn.commit()
     conn.close()
@@ -326,7 +342,7 @@ def listar_resultados(filters=None):
                r.teste_id, t.nome,
                r.avaliador,
                r.acertos, r.total, r.porcentagem,
-               r.data_hora, r.tempo_total, r.tempo_medio
+               r.data_hora, r.tempo_total, r.tempo_medio, r.repeticao
         FROM resultados r
         LEFT JOIN operadores o ON o.id=r.operador_id
         LEFT JOIN testes t ON t.id=r.teste_id
@@ -350,6 +366,10 @@ def listar_resultados(filters=None):
     if filters.get("turno"):
         query += " AND o.turno=?"
         params.append(filters["turno"])
+
+    if filters.get("repeticao"):
+        query += " AND r.repeticao=?"
+        params.append(filters["repeticao"])
 
     if filters.get("data_inicio"):
         query += " AND r.data_hora>=?"
@@ -377,35 +397,27 @@ def exportar_banco(destino_path):
 
 
 def importar_banco(arquivo_path, substituir=True):
-    """
-    Importa banco .db.
-    Se substituir=True → sobrescreve DB atual.
-    Se substituir=False → mescla registros.
-    """
-
     if not os.path.exists(arquivo_path):
         raise FileNotFoundError("Arquivo de banco não encontrado.")
 
-    # validar se o arquivo possui tabelas esperadas
+    # validar estrutura
     check = sqlite3.connect(arquivo_path)
     c = check.cursor()
     c.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = {r[0] for r in c.fetchall()}
     check.close()
 
-    needed = {"testes", "imagens", "operadores",
-              "avaliadores", "turnos", "resultados", "respostas"}
+    needed = {"testes", "imagens", "operadores", "avaliadores",
+              "turnos", "resultados", "respostas"}
 
     if not needed.issubset(tables):
         raise RuntimeError(
             "O banco importado não possui as tabelas necessárias.")
 
-    # sobrescrever
     if substituir:
         shutil.copy2(arquivo_path, DB_PATH)
         return True
 
-    # mesclar
     return importar_banco_mesclar(arquivo_path)
 
 
@@ -414,11 +426,6 @@ def importar_banco(arquivo_path, substituir=True):
 # ============================================================
 
 def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
-    """
-    Mescla registros do banco importado com o atual.
-    Não sobrescreve itens já existentes se ignorar_duplicados=True.
-    """
-
     if not os.path.exists(arquivo_import):
         raise FileNotFoundError("Banco a importar não encontrado.")
 
@@ -428,9 +435,7 @@ def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
     conn_imp = sqlite3.connect(arquivo_import)
     cur_imp = conn_imp.cursor()
 
-    # -------------------------------
     # OPERADORES
-    # -------------------------------
     cur_imp.execute("SELECT nome, matricula, turno FROM operadores")
     for nome, mat, turno in cur_imp.fetchall():
         if ignorar_duplicados:
@@ -444,9 +449,7 @@ def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
             (nome, mat, turno)
         )
 
-    # -------------------------------
     # AVALIADORES
-    # -------------------------------
     cur_imp.execute("SELECT nome FROM avaliadores")
     for (nome,) in cur_imp.fetchall():
         if ignorar_duplicados:
@@ -455,19 +458,13 @@ def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
             if cur_atual.fetchone():
                 continue
 
-        cur_atual.execute(
-            "INSERT INTO avaliadores (nome) VALUES (?)",
-            (nome,)
-        )
+        cur_atual.execute("INSERT INTO avaliadores (nome) VALUES (?)", (nome,))
 
-    # -------------------------------
     # TESTES
-    # -------------------------------
     cur_imp.execute("SELECT nome, descricao FROM testes")
     for nome, desc in cur_imp.fetchall():
         if ignorar_duplicados:
-            cur_atual.execute(
-                "SELECT id FROM testes WHERE nome=?", (nome,))
+            cur_atual.execute("SELECT id FROM testes WHERE nome=?", (nome,))
             if cur_atual.fetchone():
                 continue
 
@@ -475,32 +472,26 @@ def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
             INSERT INTO testes (nome, descricao) VALUES (?,?)
         """, (nome, desc))
 
-    # -------------------------------
     # RESULTADOS
-    # -------------------------------
     cur_imp.execute("""
         SELECT operador_id, teste_id, avaliador,
                acertos, total, porcentagem,
-               data_hora, tempo_total, tempo_medio
-        FROM resultados
+               data_hora, tempo_total, tempo_medio, repeticao
     """)
     for row in cur_imp.fetchall():
         cur_atual.execute("""
             INSERT INTO resultados
             (operador_id, teste_id, avaliador, acertos,
-             total, porcentagem, data_hora, tempo_total, tempo_medio)
-            VALUES (?,?,?,?,?,?,?,?,?)
+             total, porcentagem, data_hora, tempo_total, tempo_medio, repeticao)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
         """, row)
 
-    # -------------------------------
     # IMAGENS
-    # -------------------------------
     cur_imp.execute("""
         SELECT teste_id, nome_arquivo, resposta_correta, imagem
         FROM imagens
     """)
     for teste_id, nome_arquivo, resposta, blob in cur_imp.fetchall():
-
         if ignorar_duplicados:
             cur_atual.execute("""
                 SELECT id FROM imagens WHERE teste_id=? AND nome_arquivo=?
@@ -512,10 +503,6 @@ def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
             INSERT INTO imagens (teste_id, nome_arquivo, resposta_correta, imagem)
             VALUES (?,?,?,?)
         """, (teste_id, nome_arquivo, resposta, blob))
-
-    # -------------------------------
-    # FINALIZAR MESCLAGEM
-    # -------------------------------
 
     conn_atual.commit()
     conn_imp.close()

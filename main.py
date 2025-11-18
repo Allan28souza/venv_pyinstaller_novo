@@ -2,7 +2,7 @@ from utils import AutocompleteCombobox
 import tkinter as tk
 from tkinter import ttk
 from admin_views.admin import AdminApp
-from executar_teste import TesteExecutor
+from executar.executar_teste import iniciar_teste
 import database as db
 from utils import centralizar_janela, criar_rodape, show_error
 
@@ -238,7 +238,7 @@ class MainApp:
             self.root.deiconify()  # volta a tela principal
 
         # Inicia o executor **corretamente passando self.root**
-        TesteExecutor(
+        iniciar_teste(
             root=self.root,
             teste_id=teste_id,
             nome_teste=nome_teste,

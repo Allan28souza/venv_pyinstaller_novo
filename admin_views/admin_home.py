@@ -1,3 +1,4 @@
+from executar.executor_rr_view import RRView
 import tkinter as tk
 from tkinter import ttk
 from utils import centralizar_janela, criar_rodape
@@ -53,6 +54,9 @@ class AdminApp:
         ttk.Button(frame, text="Resultados", width=22,
                    command=lambda: ResultadosAdmin(self)).grid(row=1, column=1, padx=6, pady=6)
 
+        ttk.Button(frame, text="Análises RR", width=22,
+                   command=self.abrir_rr).grid(row=2, column=0, padx=6, pady=6)
+
         if self.voltar:
             ttk.Button(self.root, text="Voltar",
                        command=self.voltar).pack(pady=10)
@@ -64,3 +68,7 @@ class AdminApp:
             except:
                 pass
         self.rodape, _ = criar_rodape(self.root)
+    # dentro do seu MainApp ou AdminApp
+
+    def abrir_rr(self):
+        RRView(self.root)
