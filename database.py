@@ -5,16 +5,18 @@ import tempfile
 from datetime import datetime
 import shutil
 
-
 # ============================================================
 # DEFINIR CAMINHO DO BANCO (SUPORTA EXECUTÁVEL .EXE)
 # ============================================================
 
+
 def get_db_path():
     """Retorna caminho persistente para o banco (pasta APPDATA se for exe)."""
     if getattr(sys, 'frozen', False):
-        base_dir = os.path.join(os.environ.get(
-            "APPDATA", os.path.expanduser("~")), "TesteImagensApp")
+        base_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "TesteImagensApp"
+        )
     else:
         base_dir = os.path.abspath(".")
 
@@ -24,18 +26,18 @@ def get_db_path():
 
 DB_PATH = get_db_path()
 
-
 # ============================================================
 # CONEXÃO
 # ============================================================
 
+
 def conectar():
     return sqlite3.connect(DB_PATH)
 
+# ============================================================
+# CRIAR TABELAS + MIGRAÇÕES RR
+# ============================================================
 
-# ============================================================
-# CRIAR TABELAS + ATUALIZAÇÕES RR
-# ============================================================
 
 def criar_tabelas():
     conn = conectar()
@@ -83,7 +85,7 @@ def criar_tabelas():
         nome_turno TEXT UNIQUE NOT NULL
     )""")
 
-    # RESULTADOS (AGORA COM COLUNA "repeticao")
+    # RESULTADOS
     c.execute("""
     CREATE TABLE IF NOT EXISTS resultados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,11 +103,12 @@ def criar_tabelas():
         FOREIGN KEY(teste_id) REFERENCES testes(id)
     )""")
 
-    # RESPOSTAS INDIVIDUAIS (AGORA COM COLUNA "repeticao")
+    # RESPOSTAS
     c.execute("""
     CREATE TABLE IF NOT EXISTS respostas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         resultado_id INTEGER,
+        imagem_id INTEGER,
         nome_arquivo TEXT,
         resposta_usuario TEXT,
         resposta_correta TEXT,
@@ -114,37 +117,37 @@ def criar_tabelas():
         FOREIGN KEY(resultado_id) REFERENCES resultados(id)
     )""")
 
-    # INSERIR TURNOS PADRÃO
-    for t in ("1° Turno", "2° Turno", "3° Turno"):
-        try:
-            c.execute(
-                "INSERT OR IGNORE INTO turnos (nome_turno) VALUES (?)", (t,))
-        except:
-            pass
+    # -------------------------------
+    # MIGRAÇÕES
+    # -------------------------------
 
-    # ============================================================
-    # ADICIONAR COLUNAS NOVAS SE O BANCO JÁ EXISTIR (UPDATE)
-    # ============================================================
-
-    # Verifica e adiciona repetição em resultados
+    # resultados.repeticao
     c.execute("PRAGMA table_info(resultados)")
-    colunas_resultados = [row[1] for row in c.fetchall()]
-    if "repeticao" not in colunas_resultados:
+    col_res = [row[1] for row in c.fetchall()]
+    if "repeticao" not in col_res:
         c.execute("ALTER TABLE resultados ADD COLUMN repeticao INTEGER DEFAULT 1")
 
-    # Verifica e adiciona repetição em respostas
+    # respostas.repeticao / respostas.imagem_id
     c.execute("PRAGMA table_info(respostas)")
-    colunas_respostas = [row[1] for row in c.fetchall()]
-    if "repeticao" not in colunas_respostas:
+    col_resp = [row[1] for row in c.fetchall()]
+
+    if "repeticao" not in col_resp:
         c.execute("ALTER TABLE respostas ADD COLUMN repeticao INTEGER DEFAULT 1")
+
+    if "imagem_id" not in col_resp:
+        c.execute("ALTER TABLE respostas ADD COLUMN imagem_id INTEGER")
+
+    # INSERIR TURNOS PADRÃO
+    for t in ("1° Turno", "2° Turno", "3° Turno"):
+        c.execute("INSERT OR IGNORE INTO turnos (nome_turno) VALUES (?)", (t,))
 
     conn.commit()
     conn.close()
 
-
 # ============================================================
 # IMAGENS
 # ============================================================
+
 
 def adicionar_imagem(teste_id, caminho, resposta_correta):
     with open(caminho, "rb") as f:
@@ -193,23 +196,10 @@ def extrair_imagem_temp(imagem_id):
 
     return path
 
-
-def buscar_blob_imagem(nome_arquivo, teste_id):
-    conn = conectar()
-    c = conn.cursor()
-    c.execute("""
-        SELECT imagem
-        FROM imagens
-        WHERE nome_arquivo=? AND teste_id=?
-    """, (nome_arquivo, teste_id))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
-
-
 # ============================================================
 # OPERADORES
 # ============================================================
+
 
 def garantir_operador(nome, matricula, turno):
     conn = conectar()
@@ -222,8 +212,10 @@ def garantir_operador(nome, matricula, turno):
         c.execute("UPDATE operadores SET nome=?, turno=? WHERE id=?",
                   (nome, turno, op_id))
     else:
-        c.execute("INSERT INTO operadores (nome, matricula, turno) VALUES (?,?,?)",
-                  (nome, matricula, turno))
+        c.execute("""
+            INSERT INTO operadores (nome, matricula, turno)
+            VALUES (?,?,?)
+        """, (nome, matricula, turno))
         op_id = c.lastrowid
 
     conn.commit()
@@ -250,15 +242,12 @@ def obter_dados_operador(operador_id):
     """, (operador_id,))
     row = c.fetchone()
     conn.close()
-
-    if row:
-        return row[0], row[1], row[2]
-    return "", "", ""
-
+    return row if row else ("", "", "")
 
 # ============================================================
-# AVALIADORES / TURNOS
+# AVALIADORES E TURNOS
 # ============================================================
+
 
 def garantir_avaliador(nome):
     conn = conectar()
@@ -294,10 +283,10 @@ def listar_turnos():
     conn.close()
     return rows
 
+# ============================================================
+# SALVAR RESULTADO (ATUALIZADO)
+# ============================================================
 
-# ============================================================
-# RESULTADOS + REQUISITO RR (repetição)
-# ============================================================
 
 def salvar_resultado(operador_id, teste_id, avaliador,
                      acertos, total, porcentagem,
@@ -311,24 +300,32 @@ def salvar_resultado(operador_id, teste_id, avaliador,
 
     c.execute("""
         INSERT INTO resultados
-        (operador_id, teste_id, avaliador, acertos, total,
-         porcentagem, data_hora, tempo_total, tempo_medio, repeticao)
+        (operador_id, teste_id, avaliador, acertos,
+         total, porcentagem, data_hora, tempo_total,
+         tempo_medio, repeticao)
         VALUES (?,?,?,?,?,?,?,?,?,?)
     """, (operador_id, teste_id, avaliador, acertos,
           total, porcentagem, data_hora, tempo_total, tempo_medio, repeticao))
 
     resultado_id = c.lastrowid
 
-    for nome, resp_user, resp_correta, tempo in respostas_list:
+    # respostas_list agora é: (imagem_id, nome, resp_user, resp_correta, tempo)
+    for imagem_id, nome, resp_user, resp_correta, tempo in respostas_list:
         c.execute("""
             INSERT INTO respostas
-            (resultado_id, nome_arquivo, resposta_usuario, resposta_correta, tempo, repeticao)
-            VALUES (?,?,?,?,?,?)
-        """, (resultado_id, nome, resp_user, resp_correta, tempo, repeticao))
+            (resultado_id, imagem_id, nome_arquivo,
+             resposta_usuario, resposta_correta, tempo, repeticao)
+            VALUES (?,?,?,?,?,?,?)
+        """, (resultado_id, imagem_id, nome, resp_user,
+              resp_correta, tempo, repeticao))
 
     conn.commit()
     conn.close()
     return resultado_id
+
+# ============================================================
+# LISTAR RESULTADOS
+# ============================================================
 
 
 def listar_resultados(filters=None):
@@ -384,10 +381,10 @@ def listar_resultados(filters=None):
     conn.close()
     return rows
 
+# ============================================================
+# EXPORTAÇÃO / IMPORTAÇÃO
+# ============================================================
 
-# ============================================================
-# EXPORTAR / IMPORTAR BANCO
-# ============================================================
 
 def exportar_banco(destino_path):
     conn = conectar()
@@ -420,10 +417,10 @@ def importar_banco(arquivo_path, substituir=True):
 
     return importar_banco_mesclar(arquivo_path)
 
+# ============================================================
+# MESCLAGEM DE BANCOS
+# ============================================================
 
-# ============================================================
-# MESCLAR BANCO IMPORTADO
-# ============================================================
 
 def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
     if not os.path.exists(arquivo_import):
@@ -507,5 +504,4 @@ def importar_banco_mesclar(arquivo_import, ignorar_duplicados=True):
     conn_atual.commit()
     conn_imp.close()
     conn_atual.close()
-
     return True

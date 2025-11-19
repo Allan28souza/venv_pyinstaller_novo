@@ -4,13 +4,14 @@ from tkinter import messagebox, simpledialog, filedialog, ttk
 from PIL import Image, ImageTk
 import database as db
 from utils import show_info, show_error, centralizar_janela
+import os
+import shutil
 
 
 class TestesAdmin:
     def __init__(self, root, voltar_callback):
         self.root = root
         self.voltar_callback = voltar_callback
-        self.frame = tk.Frame(self.root)
 
         self.montar_tela()
 
@@ -50,9 +51,30 @@ class TestesAdmin:
         ttk.Button(btns, text="Gerenciar Imagens",
                    command=self.gerenciar_imagens).grid(row=0, column=4, padx=6)
 
-        ttk.Button(btns, text="Voltar",
-                   command=self.voltar_callback).grid(row=0, column=5, padx=6)
+        # NOVO — Importar imagens em lote
+        ttk.Button(btns, text="Importar Imagens (Lote)",
+                   command=self.importar_imagens_lote).grid(row=0, column=5, padx=6)
 
+        ttk.Button(btns, text="Voltar",
+                   command=self.voltar_callback).grid(row=0, column=6, padx=6)
+
+        self.carregar_testes()
+
+    # ---------------------------------------------------------
+    # Funções utilitárias
+    # ---------------------------------------------------------
+
+    def get_teste_selecionado(self):
+        sel = self.lista.curselection()
+        if not sel:
+            return None
+        item = self.lista.get(sel[0])
+        try:
+            return int(item.split(" - ")[0])
+        except:
+            return None
+
+    def atualizar_lista_imagens(self):
         self.carregar_testes()
 
     # ---------------------------------------------------------
@@ -88,6 +110,85 @@ class TestesAdmin:
             show_error("Erro", f"Erro ao criar teste: {e}")
 
     # ---------------------------------------------------------
+    # IMPORTAÇÃO EM LOTE
+    # ---------------------------------------------------------
+
+    def importar_imagens_lote(self):
+        import shutil
+        import re
+
+        teste_id = self.get_teste_selecionado()
+        if not teste_id:
+            return show_error("Erro", "Selecione um teste antes de importar imagens.")
+
+        # Buscar nome do teste
+        conn = db.conectar()
+        cur = conn.cursor()
+        cur.execute("SELECT nome FROM testes WHERE id=?", (teste_id,))
+        row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            return show_error("Erro", "Teste não encontrado!")
+
+        nome_teste = row[0]
+        nome_sanit = re.sub(r'[^a-zA-Z0-9]+', '_', nome_teste).lower()
+
+        caminhos = filedialog.askopenfilenames(
+            title="Selecionar imagens",
+            filetypes=[("Imagens", "*.png;*.jpg;*.jpeg;*.bmp")]
+        )
+
+        if not caminhos:
+            return
+
+        # Pasta destino
+        pasta_teste = os.path.join("testes", str(teste_id))
+        os.makedirs(pasta_teste, exist_ok=True)
+
+        # Buscar último ID existente
+        conn = db.conectar()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM imagens WHERE teste_id=?", (teste_id,))
+        total_existentes = cur.fetchone()[0]
+        conn.close()
+
+        proximo_id = total_existentes + 1
+
+        count = 0
+        for path in caminhos:
+            try:
+                ext = os.path.splitext(path)[1].lower()
+
+                # Pergunta OK / NOK
+                resp = messagebox.askquestion(
+                    "Resposta correta",
+                    f"A imagem '{os.path.basename(path)}' é OK?"
+                )
+                resposta = "OK" if resp == "yes" else "NOK"
+
+                # Nome final
+                nome_final = f"{proximo_id:03d}_img_{nome_sanit}_{resposta}{ext}"
+                destino = os.path.join(pasta_teste, nome_final)
+
+                shutil.copy2(path, destino)
+
+                # Salvar no banco
+                db.adicionar_imagem(teste_id, destino, resposta)
+
+                proximo_id += 1
+                count += 1
+
+            except Exception as e:
+                print("Erro ao importar:", e)
+
+        self.atualizar_lista_imagens()
+        show_info("Importação concluída",
+                  f"{count} imagens importadas e renomeadas!")
+
+    # ---------------------------------------------------------
+
     def editar_teste(self):
         sel = self.lista.curselection()
         if not sel:
@@ -154,7 +255,11 @@ class TestesAdmin:
             show_error("Erro", f"Erro ao excluir teste: {e}")
 
     # ---------------------------------------------------------
+
     def adicionar_imagem(self):
+        import re
+        import shutil
+
         sel = self.lista.curselection()
         if not sel:
             show_error("Erro", "Selecione um teste!")
@@ -163,20 +268,66 @@ class TestesAdmin:
         item = self.lista.get(sel[0])
         teste_id = int(item.split(" - ")[0])
 
+        # Selecionar arquivo único
         arquivo = filedialog.askopenfilename(
             title="Selecione uma imagem",
-            filetypes=[("Imagens", "*.png;*.jpg;*.jpeg")],
+            filetypes=[("Imagens", "*.png;*.jpg;*.jpeg;*.bmp")],
             parent=self.root
         )
         if not arquivo:
             return
 
-        resp = messagebox.askquestion("Resposta correta", "Esta imagem é OK?")
+        # Perguntar OK/NOK
+        resp = messagebox.askquestion(
+            "Resposta correta",
+            f"A imagem '{os.path.basename(arquivo)}' é OK?"
+        )
         resposta = "OK" if resp == "yes" else "NOK"
 
+        # Buscar nome do teste
+        conn = db.conectar()
+        cur = conn.cursor()
+        cur.execute("SELECT nome FROM testes WHERE id=?", (teste_id,))
+        row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            return show_error("Erro", "Teste não encontrado!")
+
+        nome_teste = row[0]
+        nome_sanit = re.sub(r'[^a-zA-Z0-9]+', '_', nome_teste).lower()
+
+        # Pasta destino do teste
+        pasta_teste = os.path.join("testes", str(teste_id))
+        os.makedirs(pasta_teste, exist_ok=True)
+
+        # Buscar quantidade atual para nomear corretamente
+        conn = db.conectar()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM imagens WHERE teste_id=?", (teste_id,))
+        total_existentes = cur.fetchone()[0]
+        conn.close()
+
+        novo_id = total_existentes + 1
+
+        # Montar nome final
+        ext = os.path.splitext(arquivo)[1].lower()
+        nome_final = f"{novo_id:03d}_img_{nome_sanit}_{resposta}{ext}"
+        destino = os.path.join(pasta_teste, nome_final)
+
         try:
-            db.adicionar_imagem(teste_id, arquivo, resposta)
-            show_info("Sucesso", "Imagem adicionada!")
+            shutil.copy2(arquivo, destino)
+
+            # salvar no banco
+            db.adicionar_imagem(teste_id, destino, resposta)
+
+            show_info("Sucesso", f"Imagem adicionada como:\n{nome_final}")
+
+            # Atualizar lista se existir este método
+            if hasattr(self, "atualizar_lista_imagens"):
+                self.atualizar_lista_imagens()
+
         except Exception as e:
             show_error("Erro", f"Erro ao adicionar imagem: {e}")
 

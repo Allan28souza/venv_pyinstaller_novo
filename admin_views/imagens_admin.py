@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 import os
+import shutil
 
 import database as db
 from utils import centralizar_janela, show_info, show_error
@@ -11,7 +12,6 @@ from utils import centralizar_janela, show_info, show_error
 class ImagensAdmin:
     """
     Janela para gerenciar imagens de um teste.
-    É chamada a partir do Admin e aparece como janela separada (Toplevel).
     """
 
     def __init__(self, root, teste_id, nome_teste, callback_voltar=None):
@@ -67,12 +67,21 @@ class ImagensAdmin:
 
         ttk.Button(btns, text="Atualizar lista",
                    command=self._carregar_imagens).pack(fill=tk.X, pady=3)
+
         ttk.Button(btns, text="Editar resposta",
                    command=self._editar_resposta).pack(fill=tk.X, pady=3)
+
         ttk.Button(btns, text="Excluir imagem",
                    command=self._excluir_imagem).pack(fill=tk.X, pady=3)
-        ttk.Button(btns, text="Fechar", command=self._on_close).pack(
-            fill=tk.X, pady=10)
+
+        ttk.Button(btns, text="Apagar TODAS",
+                   command=self.apagar_todas_imagens).pack(fill=tk.X, pady=3)
+
+        ttk.Button(btns, text="Renomear TODAS (Automático)",
+                   command=self._renomear_todas_automatico).pack(fill=tk.X, pady=8)
+
+        ttk.Button(btns, text="Fechar",
+                   command=self._on_close).pack(fill=tk.X, pady=10)
 
         # evento ao clicar
         self.lista.bind("<<ListboxSelect>>", self._mostrar_imagem)
@@ -174,17 +183,100 @@ class ImagensAdmin:
             return
 
         try:
+            # apagar DB
             conn = db.conectar()
             cur = conn.cursor()
             cur.execute("DELETE FROM imagens WHERE id=?", (img_id,))
             conn.commit()
             conn.close()
 
+            # apagar arquivo físico
+            pasta = os.path.join("testes", str(self.teste_id))
+            caminho = os.path.join(pasta, nome_arquivo)
+            if os.path.exists(caminho):
+                os.remove(caminho)
+
             show_info("OK", "Imagem excluída")
             self._carregar_imagens()
 
         except Exception as e:
             show_error("Erro", f"Falha ao excluir: {e}")
+
+    # --------------------------------------------------
+    def apagar_todas_imagens(self):
+        if not messagebox.askyesno(
+            "Confirmar",
+            "Apagar TODAS as imagens deste teste?\n"
+            "Atenção: isso remove também os arquivos do disco!"
+        ):
+            return
+
+        try:
+            # apagar DB
+            conn = db.conectar()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM imagens WHERE teste_id=?",
+                        (self.teste_id,))
+            conn.commit()
+            conn.close()
+
+            # apagar pasta do teste
+            pasta = os.path.join("testes", str(self.teste_id))
+            if os.path.exists(pasta):
+                shutil.rmtree(pasta)
+
+            show_info("Pronto", "Todas as imagens foram apagadas.")
+            self._carregar_imagens()
+
+        except Exception as e:
+            show_error("Erro", f"Falha ao apagar imagens: {e}")
+
+    # --------------------------------------------------
+    def _renomear_todas_automatico(self):
+        if not messagebox.askyesno(
+            "Renomear Todas",
+            "Deseja renomear TODAS as imagens automaticamente?\n"
+            "O nome antigo será perdido."
+        ):
+            return
+
+        pasta = os.path.join("testes", str(self.teste_id))
+        os.makedirs(pasta, exist_ok=True)
+
+        try:
+            imagens = db.listar_imagens(self.teste_id)
+
+            for img_id, nome_antigo, resp in imagens:
+                ext = os.path.splitext(nome_antigo)[1].lower() or ".png"
+                resp_txt = "OK" if resp.upper() == "OK" else "NOK"
+
+                nome_teste_limpo = (
+                    self.nome_teste.replace(" ", "_")
+                    .replace("/", "_")
+                    .replace("\\", "_")
+                )
+
+                novo_nome = f"{img_id}_IMG_{nome_teste_limpo}_{resp_txt}{ext}"
+
+                old_path = os.path.join(pasta, nome_antigo)
+                new_path = os.path.join(pasta, novo_nome)
+
+                if os.path.exists(old_path):
+                    os.rename(old_path, new_path)
+
+                conn = db.conectar()
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE imagens SET nome_arquivo=? WHERE id=?", (novo_nome, img_id))
+                conn.commit()
+                conn.close()
+
+            show_info(
+                "Sucesso", "Todas as imagens foram renomeadas automaticamente!")
+            self._carregar_imagens()
+
+        except Exception as e:
+            show_error("Erro", f"Falha ao renomear imagens: {e}")
 
     # --------------------------------------------------
     def _on_close(self):

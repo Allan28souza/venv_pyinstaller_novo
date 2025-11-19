@@ -1,134 +1,257 @@
 # executor_rr_view.py
+# executor_rr_view.py
+# RRView completo com 7 abas (Dashboard Profissional)
+
 import tkinter as tk
 from tkinter import ttk, messagebox
-import database as db
-from .executor_rr import (
-    calcular_repetibilidade_operador,
-    calcular_reprodutibilidade,
-    identificar_operadores_desalinhados,
-    calcular_itens_confusos,
-    gerar_relatorio_rr
-)
+from PIL import Image, ImageTk
 import os
+
+from executar.rr_graficos import (
+    plot_repetibilidade,
+    plot_reprodutibilidade,
+    plot_itens_confusos,
+    plot_ok_nok_por_imagem,
+    plot_heatmap_concordancia,
+    plot_tendencia_operador,
+)
+# função que retorna dados textuais resumidos
+from executar.rr_analise import analisar_rr
+import utils
 
 
 class RRView:
-    def __init__(self, root, on_close=None):
+    def __init__(self, root):
         self.root = root
-        self.on_close = on_close
         self.win = tk.Toplevel(root)
-        self.win.title("Análise RR")
-        self.win.geometry("800x600")
+        self.win.title(
+            "Análises RR — Estudo de Repetibilidade e Reprodutibilidade")
+        self.win.geometry("1280x720")
 
-        self._build_ui()
-        self.win.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._build_layout()
 
-    def _build_ui(self):
-        top = tk.Frame(self.win)
-        top.pack(fill="x", padx=10, pady=8)
+    # --------------------------------------------------------
+    def _build_layout(self):
+        titulo = tk.Label(
+            self.win, text="Estudo RR — MSA Atributivo", font=("Segoe UI", 18, "bold"))
+        titulo.pack(pady=10)
 
-        tk.Label(top, text="Selecione Teste:").pack(side="left")
-        self.tests_cb = ttk.Combobox(top, state="readonly", width=40)
-        self.tests_cb.pack(side="left", padx=8)
+        self.frame_top = tk.Frame(self.win)
+        self.frame_top.pack(fill="x", pady=5)
 
-        btn_refresh = ttk.Button(top, text="Carregar",
-                                 command=self._carregar_testes)
-        btn_refresh.pack(side="left", padx=6)
+        tk.Label(self.frame_top, text="ID do Teste:", font=(
+            "Segoe UI", 11)).pack(side="left", padx=8)
+        self.entry_teste = ttk.Entry(self.frame_top, width=10)
+        self.entry_teste.pack(side="left")
 
-        ttk.Button(top, text="Executar Análise RR",
-                   command=self._executar).pack(side="right")
+        ttk.Button(self.frame_top, text="Analisar",
+                   command=self._executar_analise).pack(side="left", padx=10)
 
-        # painel texto com resultados
-        self.txt = tk.Text(self.win, wrap="word")
-        self.txt.pack(expand=True, fill="both", padx=10, pady=10)
+        ttk.Button(self.frame_top, text="Gerar PDF",
+                   command=self.gerar_pdf_rr).pack(side="right", padx=10)
 
-        bottom = tk.Frame(self.win)
-        bottom.pack(fill="x", padx=10, pady=6)
-        ttk.Button(bottom, text="Exportar PDF RR",
-                   command=self._export_pdf).pack(side="right")
+        self.notebook = ttk.Notebook(self.win)
+        self.notebook.pack(expand=True, fill="both")
 
-        self._carregar_testes()
+        # abas
+        self.aba_resumo = ttk.Frame(self.notebook)
+        self.aba_rep = ttk.Frame(self.notebook)
+        self.aba_reprod = ttk.Frame(self.notebook)
+        self.aba_confusos = ttk.Frame(self.notebook)
+        self.aba_oknok = ttk.Frame(self.notebook)
+        self.aba_tendencia = ttk.Frame(self.notebook)
+        self.aba_heatmap = ttk.Frame(self.notebook)
 
-    def _carregar_testes(self):
-        conn = db.conectar()
-        cur = conn.cursor()
-        cur.execute("SELECT id, nome FROM testes ORDER BY nome")
-        rows = cur.fetchall()
-        conn.close()
-        self.tests = rows
-        vals = [f"{r[0]} - {r[1]}" for r in rows]
-        self.tests_cb['values'] = vals
-        if vals:
-            self.tests_cb.current(0)
+        self.notebook.add(self.aba_resumo, text="Resumo Geral")
+        self.notebook.add(self.aba_rep, text="Repetibilidade")
+        self.notebook.add(self.aba_reprod, text="Reprodutibilidade")
+        self.notebook.add(self.aba_confusos, text="Itens Confusos")
+        self.notebook.add(self.aba_oknok, text="OK/NOK por Imagem")
+        self.notebook.add(self.aba_tendencia, text="Tendência por Operador")
+        self.notebook.add(self.aba_heatmap, text="Heatmap")
 
-    def _get_selected_teste(self):
-        sel = self.tests_cb.get()
-        if not sel:
-            return None
-        return int(sel.split(" - ", 1)[0])
+    # --------------------------------------------------------
+    def _limpar_aba(self, aba):
+        for w in aba.winfo_children():
+            w.destroy()
 
-    def _executar(self):
-        teste_id = self._get_selected_teste()
-        if not teste_id:
-            messagebox.showerror("Erro", "Selecione um teste")
+    def _carregar_imagem(self, aba, caminho, title=""):
+        if not os.path.exists(caminho):
+            tk.Label(aba, text="Imagem não encontrada", fg="red").pack()
             return
 
-        self.txt.delete("1.0", tk.END)
-        self.txt.insert(tk.END, f"Analisando teste {teste_id}...\n\n")
+        img = Image.open(caminho)
+        img = img.resize((900, 550), Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
 
-        # repetibilidade por operador
-        conn = db.conectar()
-        cur = conn.cursor()
-        cur.execute("SELECT id, nome FROM operadores ORDER BY nome")
-        operadores = cur.fetchall()
-        conn.close()
+        tk.Label(aba, text=title, font=("Segoe UI", 14, "bold")).pack(pady=5)
+        lbl = tk.Label(aba, image=photo)
+        lbl.image = photo
+        lbl.pack(pady=10)
 
-        self.txt.insert(tk.END, "Repetibilidade por operador:\n")
-        for opid, opname in operadores:
-            r = calcular_repetibilidade_operador(opid, teste_id)
-            if not r:
-                continue
-            self.txt.insert(
-                tk.END, f" - {r['operador_nome'] or opid}: {r['imagens_consistentes']}/{r['total_imagens']} consistentes ({r['porcentagem_consistencia']:.1f}%)\n")
+    # --------------------------------------------------------
+    def _executar_analise(self):
+        teste_id_txt = self.entry_teste.get().strip()
+        if not teste_id_txt.isdigit():
+            return utils.show_error("Erro", "Digite um ID de teste válido.")
 
-        self.txt.insert(tk.END, "\nReprodutibilidade (entre operadores):\n")
-        rep = calcular_reprodutibilidade(teste_id)
-        if rep:
-            self.txt.insert(
-                tk.END, f"Operadores analisados: {len(rep['operadores'])}\n")
-            self.txt.insert(tk.END, "Concordância vs global:\n")
-            for op, val in rep['concordancia_vs_global'].items():
-                nome = rep['operador_nomes'].get(op, "")
-                self.txt.insert(tk.END, f" - {nome or op}: {val:.1f}%\n")
+        teste_id = int(teste_id_txt)
 
-        self.txt.insert(tk.END, "\nItens mais confusos:\n")
-        itens = calcular_itens_confusos(teste_id)
-        for it in itens[:20]:
-            self.txt.insert(
-                tk.END, f" - {it['nome_arquivo']}: discordância {it['discordancia']:.2f}, respostas {it['contagem']}\n")
+        # 1 — gerar dados textuais
+        resumo = analisar_rr(teste_id)
 
-        self.txt.insert(tk.END, "\nOperadores mais desalinhados:\n")
-        desalinhados = identificar_operadores_desalinhados(teste_id, top_n=10)
-        for opid, opnome, val in desalinhados:
-            self.txt.insert(
-                tk.END, f" - {opnome or opid}: {val if val is not None else 'N/A'}\n")
+        # limpar abas
+        for aba in [self.aba_resumo, self.aba_rep, self.aba_reprod,
+                    self.aba_confusos, self.aba_oknok, self.aba_tendencia, self.aba_heatmap]:
+            self._limpar_aba(aba)
 
-        self.txt.see("1.0")
+        # mostrar resumo
+        tk.Label(self.aba_resumo, text="Resumo do Estudo RR",
+                 font=("Segoe UI", 16, "bold")).pack(pady=10)
+        caixa = tk.Text(self.aba_resumo, font=(
+            "Segoe UI", 11), width=120, height=25)
+        caixa.pack(padx=10, pady=10)
+        caixa.insert("end", resumo)
+        caixa.config(state="disabled")
 
-    def _export_pdf(self):
-        teste_id = self._get_selected_teste()
-        if not teste_id:
-            messagebox.showerror("Erro", "Selecione um teste")
-            return
-        caminho = gerar_relatorio_rr(teste_id)
+        # 2 — gerar gráficos
         try:
-            os.startfile(caminho)
+            rep_path = plot_repetibilidade(teste_id)
+            self._carregar_imagem(self.aba_rep, rep_path,
+                                  "Repetibilidade por Operador")
+        except Exception as e:
+            tk.Label(self.aba_rep, text=f"Erro: {e}").pack()
+
+        try:
+            reprod_path = plot_reprodutibilidade(teste_id)
+            self._carregar_imagem(
+                self.aba_reprod, reprod_path, "Reprodutibilidade vs Consenso")
+        except Exception as e:
+            tk.Label(self.aba_reprod, text=f"Erro: {e}").pack()
+
+        try:
+            conf_path = plot_itens_confusos(teste_id)
+            self._carregar_imagem(
+                self.aba_confusos, conf_path, "Itens mais Confusos")
+        except Exception as e:
+            tk.Label(self.aba_confusos, text=f"Erro: {e}").pack()
+
+        try:
+            oknok_path = plot_ok_nok_por_imagem(teste_id)
+            self._carregar_imagem(
+                self.aba_oknok, oknok_path, "OK/NOK por Imagem")
+        except Exception as e:
+            tk.Label(self.aba_oknok, text=f"Erro: {e}").pack()
+
+        try:
+            tend_path = plot_tendencia_operador(teste_id)
+            self._carregar_imagem(self.aba_tendencia,
+                                  tend_path, "Tendência por Operador")
+        except Exception as e:
+            tk.Label(self.aba_tendencia, text=f"Erro: {e}").pack()
+
+        try:
+            heat_path = plot_heatmap_concordancia(teste_id)
+            self._carregar_imagem(
+                self.aba_heatmap, heat_path, "Heatmap de Concordância")
+        except Exception as e:
+            tk.Label(self.aba_heatmap, text=f"Erro: {e}").pack()
+
+    # --------------------------------------------------------
+    # GERAR PDF DO ESTUDO RR
+    # --------------------------------------------------------
+    def gerar_pdf_rr(self):
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.lib.utils import ImageReader
+        import os
+        from datetime import datetime
+        from executar.rr_graficos import gerar_todos_graficos
+
+        teste_id_txt = self.entry_teste.get().strip()
+
+        if not teste_id_txt.isdigit():
+            return utils.show_error("Erro", "Informe um ID de teste válido.")
+
+        teste_id = int(teste_id_txt)
+
+        # gera todos os gráficos novamente
+        try:
+            paths = gerar_todos_graficos(teste_id)
+        except Exception as e:
+            return utils.show_error("Erro", f"Não foi possível gerar gráficos:\n{e}")
+
+        pasta = "resultados/rr_pdf"
+        os.makedirs(pasta, exist_ok=True)
+
+        nome_pdf = os.path.join(
+            pasta,
+            f"RR_{teste_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        )
+
+        c = canvas.Canvas(nome_pdf, pagesize=A4)
+        w, h = A4
+
+        # --------------------------------------------------------
+        # PÁGINA 1 – Cabeçalho do Relatório
+        # --------------------------------------------------------
+        c.setFont("Helvetica-Bold", 20)
+        c.drawString(2*cm, h - 2*cm, "Relatório de RR – MSA Atributivo")
+
+        c.setFont("Helvetica", 12)
+        c.drawString(2*cm, h - 3*cm,
+                     f"Teste analisado: {teste_id}")
+        c.drawString(2*cm, h - 4*cm,
+                     f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+        # insere resumo textual
+        c.setFont("Helvetica", 10)
+        resumo = analisar_rr(teste_id).split("\n")
+
+        y = h - 5*cm
+        for linha in resumo:
+            if y < 2*cm:
+                c.showPage()
+                y = h - 2*cm
+            c.drawString(2*cm, y, linha)
+            y -= 0.5*cm
+
+        c.showPage()
+
+        # --------------------------------------------------------
+        # Demais páginas – gráficos
+        # --------------------------------------------------------
+        for titulo, path in paths.items():
+            if not path or not os.path.exists(path):
+                continue
+
+            c.setFont("Helvetica-Bold", 16)
+            c.drawString(2*cm, h - 2*cm, titulo.replace("_", " ").title())
+
+            try:
+                img = ImageReader(path)
+                c.drawImage(
+                    img,
+                    2*cm,
+                    3.5*cm,
+                    width=w - 4*cm,
+                    height=h - 7*cm,
+                    preserveAspectRatio=True,
+                )
+            except Exception as e:
+                c.setFont("Helvetica", 12)
+                c.drawString(2*cm, h - 5*cm, f"[Erro ao carregar imagem: {e}]")
+
+            c.showPage()
+
+        c.save()
+
+        # tenta abrir automaticamente (Windows)
+        try:
+            os.startfile(nome_pdf)
         except:
             pass
 
-    def _on_close(self):
-        try:
-            if callable(self.on_close):
-                self.on_close()
-        finally:
-            self.win.destroy()
+        utils.show_info("PDF Gerado",
+                        f"Relatório salvo em:\n{nome_pdf}")
