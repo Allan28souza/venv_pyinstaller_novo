@@ -72,6 +72,7 @@ class AdminApp:
             ("Resultados", self.abrir_resultados),
             ("Importar Banco (.db)", self.importar_banco),
             ("Exportar Banco (.db)", self.exportar_banco),
+            ("Abrir pasta do banco", self.abrir_pasta_banco),   # ← NOVO BOTÃO
             ("Análises RR (R&R)", self.abrir_rr)
         ]
 
@@ -138,6 +139,24 @@ class AdminApp:
         except Exception as e:
             show_error("Erro", f"Falha ao exportar banco:\n{e}")
 
+    # -------------------------------------------
+    # NOVA FUNÇÃO → abrir pasta onde está o banco
+    def abrir_pasta_banco(self):
+        import os
+        import utils
+
+        pasta = os.path.dirname(db.DB_PATH)
+
+        try:
+            if os.path.exists(pasta):
+                os.startfile(pasta)     # abre o Explorer no Windows
+            else:
+                utils.show_error(
+                    "Erro", "A pasta do banco não foi encontrada.")
+        except Exception as e:
+            utils.show_error("Erro", f"Não foi possível abrir a pasta.\n\n{e}")
+
+    # -------------------------------------------
     def importar_banco(self):
         from tkinter import filedialog
         from utils import show_error, show_info

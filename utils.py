@@ -13,7 +13,7 @@ from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from io import BytesIO
 
-VERSAO = "v1.0"
+VERSAO = "v4.0"
 PRODUTOR = "Allan Fonseca"
 CONFIG_PATH = "config.json"
 
